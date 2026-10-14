@@ -21,3 +21,19 @@ output "ec2_a_private_ip" {
 output "ec2_b_private_ip" {
   value = module.ec2_b.private_ip
 }
+
+output "s3_bucket_name" {
+  value = module.s3.bucket_name
+}
+
+output "s3_bucket_arn" {
+  value = module.s3.bucket_arn
+}
+
+output "vpc_a_s3_endpoint_id" {
+  value = module.s3_endpoint_vpc_a.vpc_endpoint_id
+}
+
+output "vpc_b_s3_endpoint_id" {
+  value = module.s3_endpoint_vpc_b.vpc_endpoint_id
+}
