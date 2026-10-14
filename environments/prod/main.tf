@@ -2,9 +2,9 @@
 # Get latest Amazon Linux 2023 AMI
 # -------------------------------------------------------
 
-data "aws_ssm_parameter" "amazon_linux" {
-  name = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
-}
+
+
+
 
 locals {
   common_tags = {
@@ -121,7 +121,7 @@ module "bastion" {
   source = "../../modules/bastion"
 
   name          = "prod-bastion"
-  ami_id        = data.aws_ssm_parameter.amazon_linux.value
+  ami_id        = var.ami_id
   instance_type = var.instance_type
 
   subnet_id = module.vpc_a.public_subnet_id
@@ -142,7 +142,7 @@ module "ec2_a" {
 
   instance_name = "prod-ec2-a"
 
-  ami_id        = data.aws_ssm_parameter.amazon_linux.value
+  ami_id        = var.ami_id
   instance_type = var.instance_type
 
   subnet_id = module.vpc_a.private_subnet_id
@@ -166,7 +166,7 @@ module "ec2_b" {
 
   instance_name = "prod-ec2-b"
 
-  ami_id        = data.aws_ssm_parameter.amazon_linux.value
+  ami_id        = var.ami_id
   instance_type = var.instance_type
 
   subnet_id = module.vpc_b.private_subnet_id
@@ -178,6 +178,58 @@ module "ec2_b" {
   ssh_allowed_cidrs = [
     "10.10.0.0/16"
   ]
+
+  tags = local.common_tags
+}
+
+# =======================================================
+# S3 Bucket
+# =======================================================
+
+module "s3" {
+  source = "../../modules/s3"
+
+  bucket_name = "subhampanwarr-production-app-data-2026"
+
+  versioning_enabled = true
+
+  tags = local.common_tags
+}
+
+# =======================================================
+# S3 Gateway Endpoint - VPC-A
+# =======================================================
+
+module "s3_endpoint_vpc_a" {
+  source = "../../modules/vpc-endpoint"
+
+  vpc_id     = module.vpc_a.vpc_id
+  aws_region = var.aws_region
+
+  route_table_ids = [
+    module.vpc_a.private_route_table_id
+  ]
+
+  endpoint_name = "prod-vpc-a-s3-endpoint"
+
+  tags = local.common_tags
+}
+
+# =======================================================
+# S3 Gateway Endpoint - VPC-B
+# =======================================================
+
+module "s3_endpoint_vpc_b" {
+  source = "../../modules/vpc-endpoint"
+
+  vpc_id     = module.vpc_b.vpc_id
+  aws_region = var.aws_region
+
+  route_table_ids = [
+    module.vpc_b.private_route_table_id
+  ]
+
+  endpoint_name = "prod-vpc-b-s3-endpoint"
 
   tags = local.common_tags
 }

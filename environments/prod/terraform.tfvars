@@ -8,3 +8,5 @@ key_name = "production-key"
 
 # Replace with YOUR public IP
 admin_cidr = "49.36.176.215/32"
+
+ami_id = "ami-0d27e0fb3bac4d724"

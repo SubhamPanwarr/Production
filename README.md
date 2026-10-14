@@ -1,6 +1,6 @@
 # Production AWS Terraform Infrastructure
 
-Production-style AWS infrastructure deployed through Terraform.
+Production-style AWS infrastructure built using reusable Terraform modules.
 
 ## Architecture
 
@@ -18,6 +18,9 @@ The project creates:
 - Internet Gateway
 - Route Tables
 - Security Groups
+- S3 Bucket
+- S3 Gateway VPC Endpoint for VPC-A
+- S3 Gateway VPC Endpoint for VPC-B
 
 ## Environments
 
@@ -31,28 +34,36 @@ The project creates:
 - EC2
 - Bastion
 - Transit Gateway
+- S3
+- VPC Endpoint
 
 ## Architecture Flow
 
-User -> Bastion -> VPC-A -> Transit Gateway -> VPC-B
+```text
+User
+ |
+ v
+Bastion
+ |
+ v
+VPC-A
+ |
+ +------> EC2-A
+ |
+ +------> Transit Gateway ------> VPC-B ------> EC2-B
 
-## Deployment
+EC2-A
+ |
+ v
+S3 Gateway Endpoint
+ |
+ v
+S3 Bucket
 
-```bash
-cd environments/prod
-
-terraform init
-terraform fmt
-terraform validate
-terraform plan
-terraform apply
-
-
----
-
-# Step 22 — Check the full repository
-
-Run:
-
-```bash
-cd ~/Production
+EC2-B
+ |
+ v
+S3 Gateway Endpoint
+ |
+ v
+S3 Bucket
