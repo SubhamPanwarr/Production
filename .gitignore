@@ -22,3 +22,9 @@ terraform.rc
 Thumbs.db
 
 .env
+
+# Terraform local/generated files
+**/.terraform.lock.hcl
+**/backend.hcl
+**/backend.tf
+**/terraform.tfvars
