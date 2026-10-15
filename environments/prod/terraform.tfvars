@@ -7,6 +7,6 @@ instance_type = "t3.micro"
 key_name = "production-key"
 
 # Replace with YOUR public IP
-admin_cidr = "49.36.176.215/32"
+admin_cidr = "49.36.176.119/32"
 
 ami_id = "ami-0d27e0fb3bac4d724"
