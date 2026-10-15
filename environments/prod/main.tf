@@ -150,6 +150,8 @@ module "ec2_a" {
 
   key_name = var.key_name
 
+  iam_instance_profile = module.ec2_s3_iam.instance_profile_name
+
   ssh_allowed_cidrs = [
     "10.10.1.0/24"
   ]
@@ -173,6 +175,8 @@ module "ec2_b" {
   vpc_id    = module.vpc_b.vpc_id
 
   key_name = var.key_name
+   
+  iam_instance_profile = module.ec2_s3_iam.instance_profile_name
 
   # Bastion comes from VPC-A.
   ssh_allowed_cidrs = [
@@ -232,4 +236,11 @@ module "s3_endpoint_vpc_b" {
   endpoint_name = "prod-vpc-b-s3-endpoint"
 
   tags = local.common_tags
+}
+
+module "ec2_s3_iam" {
+  source = "../../modules/iam-ec2-s3"
+
+  role_name  = "prod-ec2-s3-role"
+  bucket_arn = module.s3.bucket_arn
 }

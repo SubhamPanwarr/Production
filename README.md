@@ -67,3 +67,24 @@ S3 Gateway Endpoint
  |
  v
 S3 Bucket
+
+## EC2 IAM Role for S3 Access
+
+EC2-A and EC2-B use an IAM instance profile to access the S3 bucket securely.
+
+Architecture:
+
+```text
+EC2-A / EC2-B
+      |
+      v
+IAM Instance Profile
+      |
+      v
+IAM Role
+      |
+      v
+S3 Policy
+      |
+      v
+S3 Bucket

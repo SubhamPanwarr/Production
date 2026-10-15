@@ -33,6 +33,8 @@ resource "aws_instance" "this" {
   key_name                    = var.key_name
   associate_public_ip_address = false
 
+  iam_instance_profile = var.iam_instance_profile
+
   vpc_security_group_ids = [
     aws_security_group.this.id
   ]
