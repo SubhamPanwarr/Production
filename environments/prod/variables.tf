@@ -32,3 +32,21 @@ variable "ami_id" {
   description = "Pinned AMI ID for EC2 instances"
   type        = string
 }
+
+variable "availability_zone_2" {
+  description = "Second Availability Zone"
+  type        = string
+  default     = "us-east-1b"
+}
+
+variable "db_username" {
+  description = "RDS master username"
+  type        = string
+  sensitive   = true
+}
+
+variable "db_password" {
+  description = "RDS master password"
+  type        = string
+  sensitive   = true
+}

@@ -175,7 +175,7 @@ module "ec2_b" {
   vpc_id    = module.vpc_b.vpc_id
 
   key_name = var.key_name
-   
+
   iam_instance_profile = module.ec2_s3_iam.instance_profile_name
 
   # Bastion comes from VPC-A.
@@ -243,4 +243,81 @@ module "ec2_s3_iam" {
 
   role_name  = "prod-ec2-s3-role"
   bucket_arn = module.s3.bucket_arn
+}
+
+# =======================================================
+# VPC-A Additional Public Subnet - AZ-B
+# Used by Application Load Balancer
+# =======================================================
+
+resource "aws_subnet" "vpc_a_public_2" {
+  vpc_id                  = module.vpc_a.vpc_id
+  cidr_block              = "10.10.3.0/24"
+  availability_zone       = var.availability_zone_2
+  map_public_ip_on_launch = true
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "prod-vpc-a-public-subnet-2"
+    }
+  )
+}
+
+resource "aws_route_table_association" "vpc_a_public_2" {
+  subnet_id      = aws_subnet.vpc_a_public_2.id
+  route_table_id = module.vpc_a.public_route_table_id
+}
+
+# =======================================================
+# VPC-A Additional Private DB Subnet - AZ-B
+# =======================================================
+
+resource "aws_subnet" "vpc_a_private_2" {
+  vpc_id            = module.vpc_a.vpc_id
+  cidr_block        = "10.10.4.0/24"
+  availability_zone = var.availability_zone_2
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "prod-vpc-a-private-subnet-2"
+    }
+  )
+}
+
+resource "aws_route_table_association" "vpc_a_private_2" {
+  subnet_id      = aws_subnet.vpc_a_private_2.id
+  route_table_id = module.vpc_a.private_route_table_id
+}
+
+# =======================================================
+# RDS MySQL
+# =======================================================
+
+module "rds" {
+
+  source = "../../modules/rds"
+
+  identifier = "prod-mysql"
+
+  vpc_id = module.vpc_a.vpc_id
+
+  subnet_ids = [
+    module.vpc_a.private_subnet_id,
+    aws_subnet.vpc_a_private_2.id
+  ]
+
+  allowed_security_group_id = module.ec2_a.security_group_id
+
+  db_name     = "productiondb"
+  db_username = var.db_username
+  db_password = var.db_password
+
+  instance_class    = "db.t3.micro"
+  allocated_storage = 20
+
+  multi_az = false
+
+  tags = local.common_tags
 }
