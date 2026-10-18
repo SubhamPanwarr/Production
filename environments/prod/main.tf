@@ -321,3 +321,36 @@ module "rds" {
 
   tags = local.common_tags
 }
+
+
+# =======================================================
+# Amazon EKS - Day 1
+# =======================================================
+
+module "eks" {
+  source = "../../modules/eks"
+
+  cluster_name = var.eks_cluster_name
+
+  # EKS uses two private subnets in different Availability Zones.
+  private_subnet_ids = [
+    module.vpc_a.private_subnet_id,
+    aws_subnet.vpc_a_private_2.id
+  ]
+
+  instance_types = ["t3.medium"]
+
+  min_size     = 2
+  desired_size = 2
+  max_size     = 4
+
+  capacity_type = "ON_DEMAND"
+
+  tags = merge(
+    local.common_tags,
+    {
+      ManagedBy = "Terraform"
+      Component = "EKS"
+    }
+  )
+}
