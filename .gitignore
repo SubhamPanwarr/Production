@@ -28,3 +28,9 @@ Thumbs.db
 **/backend.hcl
 **/backend.tf
 **/terraform.tfvars
+
+# Temporary AWS/S3 cleanup files
+environments/prod/delete-markers.json
+environments/prod/markers-delete.json
+environments/prod/versions-delete.json
+environments/prod/versions.json

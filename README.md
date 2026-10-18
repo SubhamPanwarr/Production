@@ -789,7 +789,26 @@ This project demonstrates practical knowledge of:
 - AWS networking
 - Secure application-to-database connectivity
 
+## Amazon EKS – Day 1 Implementation
 
+The production infrastructure has been extended with Amazon EKS to provide a Kubernetes-based application orchestration layer.
+
+### EKS Architecture
+
+The EKS cluster reuses the existing private subnets in VPC-A across multiple Availability Zones.
+
+```text
+                    Amazon EKS Control Plane
+                       Managed by AWS
+                              |
+                   -----------------------
+                   |                     |
+            Private Subnet        Private Subnet
+              us-east-1a            us-east-1b
+                   |                     |
+            Worker Node-1         Worker Node-2
+                   |                     |
+                  Pods                  Pods
 
 # Author
 
