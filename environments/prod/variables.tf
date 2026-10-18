@@ -50,3 +50,10 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+
+variable "eks_cluster_name" {
+  description = "Production EKS cluster name"
+  type        = string
+  default     = "production-eks-cluster"
+}
