@@ -813,3 +813,188 @@ Transit Gateway
 IAM
 Networking
 ```
+
+
+---
+
+# Amazon EKS - Day 1 Implementation
+
+The production infrastructure has been extended with **Amazon EKS** so Kubernetes workloads can run on AWS while reusing the existing VPC-A networking.
+
+## Day 1 Goal
+
+Day 1 focuses only on creating the Kubernetes infrastructure foundation:
+
+- EKS control plane
+- EKS IAM roles
+- Managed Node Group
+- Two private subnets across two Availability Zones
+- Node scaling configuration
+- Kubernetes cluster access through `kubectl`
+
+Application Deployments, Services, Ingress, ALB, HPA, persistent storage, monitoring, and CI/CD will be added in later phases.
+
+## EKS Network Placement
+
+The EKS cluster uses the existing VPC-A private subnet in `us-east-1a` and the additional private subnet in `us-east-1b`.
+
+```text
+VPC-A - 10.10.0.0/16
+|
++-- Private Subnet - 10.10.2.0/24 - us-east-1a
+|      |
+|      +-- EKS Worker Node
+|
++-- Private Subnet - 10.10.4.0/24 - us-east-1b
+       |
+       +-- EKS Worker Node
+```
+
+The EKS control plane is managed by AWS. The application compute layer runs on an EKS Managed Node Group inside the private subnets.
+
+## Day 1 EKS Architecture
+
+```text
+                     AWS Managed EKS Control Plane
+                                |
+                 +--------------+--------------+
+                 |                             |
+        Private Subnet AZ-A           Private Subnet AZ-B
+          10.10.2.0/24                  10.10.4.0/24
+                 |                             |
+          Worker Node-1                  Worker Node-2
+                 |                             |
+               Pods                          Pods
+```
+
+## Managed Node Group Configuration
+
+```text
+Instance Type : t3.medium
+Capacity Type : ON_DEMAND
+Minimum Nodes : 2
+Desired Nodes : 2
+Maximum Nodes : 4
+```
+
+## Terraform EKS Module
+
+A reusable EKS module has been added:
+
+```text
+modules/
+└── eks/
+    ├── main.tf
+    ├── variables.tf
+    └── outputs.tf
+```
+
+The production environment calls this module from:
+
+```text
+environments/prod/main.tf
+```
+
+The EKS module receives the two real private subnet IDs:
+
+```hcl
+private_subnet_ids = [
+  module.vpc_a.private_subnet_id,
+  aws_subnet.vpc_a_private_2.id
+]
+```
+
+This keeps the worker nodes private while spreading them across two Availability Zones.
+
+## IAM Configuration
+
+The EKS control plane uses an IAM role with:
+
+```text
+AmazonEKSClusterPolicy
+```
+
+The managed worker nodes use an EC2 IAM role with:
+
+```text
+AmazonEKSWorkerNodePolicy
+AmazonEC2ContainerRegistryPullOnly
+AmazonEKS_CNI_Policy
+```
+
+For this first implementation, the VPC CNI permissions are attached to the node role. A later security-hardening phase can move add-on permissions to dedicated workload identities.
+
+## Validate Terraform
+
+From the production environment:
+
+```bash
+cd ~/Production/environments/prod
+
+terraform fmt -recursive
+terraform validate
+terraform plan
+```
+
+Before applying, verify that Terraform is creating the expected EKS and IAM resources and is **not unexpectedly destroying or replacing** existing VPC, subnet, RDS, Transit Gateway, NAT Gateway, or S3 resources.
+
+## Apply EKS
+
+After reviewing the plan:
+
+```bash
+terraform apply
+```
+
+## Configure kubectl
+
+After the cluster has been created:
+
+```bash
+aws eks update-kubeconfig \
+  --region us-east-1 \
+  --name production-eks-cluster
+```
+
+Validate cluster access:
+
+```bash
+kubectl cluster-info
+kubectl get nodes
+kubectl get nodes -o wide
+kubectl get pods -A
+```
+
+The Day 1 success condition is:
+
+```text
+EKS cluster created
++
+Managed Node Group created
++
+Two worker nodes joined
++
+kubectl connected
++
+Worker nodes show Ready
+```
+
+## Next Kubernetes Phases
+
+The planned Kubernetes implementation will progressively add:
+
+1. Namespace
+2. Deployment and ReplicaSet
+3. Pods
+4. ClusterIP Service
+5. Amazon ECR
+6. AWS Load Balancer Controller
+7. Ingress and ALB
+8. ConfigMaps and Secrets
+9. Readiness and Liveness Probes
+10. Resource Requests and Limits
+11. Metrics Server and HPA
+12. Karpenter or node autoscaling
+13. EBS CSI, PV, and PVC
+14. Prometheus and Grafana
+15. Jenkins CI/CD deployment into EKS
