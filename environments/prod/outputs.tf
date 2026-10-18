@@ -37,3 +37,16 @@ output "vpc_a_s3_endpoint_id" {
 output "vpc_b_s3_endpoint_id" {
   value = module.s3_endpoint_vpc_b.vpc_endpoint_id
 }
+
+
+output "eks_cluster_name" {
+  value = module.eks.cluster_name
+}
+
+output "eks_cluster_endpoint" {
+  value = module.eks.cluster_endpoint
+}
+
+output "eks_node_group_name" {
+  value = module.eks.node_group_name
+}
