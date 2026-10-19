@@ -50,3 +50,12 @@ output "eks_cluster_endpoint" {
 output "eks_node_group_name" {
   value = module.eks.node_group_name
 }
+
+
+output "kubernetes_namespace" {
+  value = kubernetes_namespace_v1.production.metadata[0].name
+}
+
+output "nginx_service_name" {
+  value = kubernetes_service_v1.nginx.metadata[0].name
+}

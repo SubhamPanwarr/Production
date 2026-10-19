@@ -1017,3 +1017,388 @@ The planned Kubernetes implementation will progressively add:
 13. EBS CSI, PV, and PVC
 14. Prometheus and Grafana
 15. Jenkins CI/CD deployment into EKS
+
+
+---
+
+# Amazon EKS - Day 2 Kubernetes Workloads
+
+Day 2 introduces the first Kubernetes application workloads on top of the EKS cluster created on Day 1.
+
+## Day 2 Goal
+
+The objective is to learn how Terraform can manage Kubernetes resources inside Amazon EKS.
+
+The following Kubernetes resources are created:
+
+- Terraform Kubernetes provider
+- `production` Namespace
+- NGINX Deployment
+- 3 Pod replicas
+- Labels and selectors
+- ClusterIP Service
+- CPU and memory requests
+- CPU and memory limits
+- Readiness probe
+- Liveness probe
+
+Ingress, ALB, ECR, HPA, persistent storage, and monitoring are intentionally reserved for later phases.
+
+## Day 2 Architecture
+
+```text
+                    Amazon EKS
+                        |
+                 production Namespace
+                        |
+                    Deployment
+                    nginx
+                        |
+                    ReplicaSet
+                        |
+             +----------+----------+
+             |          |          |
+           Pod-1      Pod-2      Pod-3
+             \          |          /
+              \         |         /
+                 nginx-service
+                   ClusterIP
+```
+
+The Kubernetes Service provides one stable internal endpoint for the three NGINX Pods.
+
+## Terraform Kubernetes Provider
+
+Terraform now includes the HashiCorp Kubernetes provider.
+
+```hcl
+kubernetes = {
+  source  = "hashicorp/kubernetes"
+  version = "~> 2.0"
+}
+```
+
+Terraform authenticates to the EKS API server using the existing EKS cluster outputs.
+
+```text
+Terraform
+   |
+   +-- AWS Provider
+   |      |
+   |      +-- VPC
+   |      +-- EKS
+   |      +-- IAM
+   |      +-- RDS
+   |
+   +-- Kubernetes Provider
+          |
+          +-- Namespace
+          +-- Deployment
+          +-- Pods
+          +-- Service
+```
+
+## Production Namespace
+
+The namespace separates production Kubernetes resources logically from system workloads.
+
+```text
+EKS Cluster
+|
++-- kube-system
+|
++-- production
+     |
+     +-- nginx Deployment
+     +-- nginx-service
+```
+
+Validation:
+
+```bash
+kubectl get namespaces
+kubectl get pods -n production
+```
+
+## NGINX Deployment
+
+The Deployment maintains three replicas.
+
+```text
+Desired replicas = 3
+
+Deployment
+   |
+ReplicaSet
+   |
++-- Pod-1
++-- Pod-2
++-- Pod-3
+```
+
+If one Pod fails, Kubernetes attempts to restore the desired replica count.
+
+Validation:
+
+```bash
+kubectl get deployment -n production
+kubectl get replicasets -n production
+kubectl get pods -n production
+kubectl get pods -n production -o wide
+```
+
+## Labels and Selectors
+
+The Pods use:
+
+```text
+app = nginx
+```
+
+The Service uses the same label selector.
+
+```text
+nginx-service
+      |
+ selector
+ app=nginx
+      |
++-----+-----+
+|     |     |
+Pod   Pod   Pod
+```
+
+This is how the Service identifies which Pods should receive traffic.
+
+## ClusterIP Service
+
+The service is internal to the Kubernetes cluster.
+
+```text
+Service Type = ClusterIP
+
+nginx-service
+      |
+      | TCP 80
+      |
++-----+-----+
+|     |     |
+Pod-1 Pod-2 Pod-3
+```
+
+Validation:
+
+```bash
+kubectl get svc -n production
+kubectl describe svc nginx-service -n production
+kubectl get endpoints -n production
+```
+
+The application is intentionally not exposed to the public internet on Day 2.
+
+## Resource Requests and Limits
+
+Each NGINX container includes CPU and memory resource controls.
+
+```text
+Requests
+CPU    = 100m
+Memory = 128Mi
+
+Limits
+CPU    = 250m
+Memory = 256Mi
+```
+
+Requests help Kubernetes decide where the Pod can be scheduled.
+
+Limits define the maximum resources available to the container.
+
+## Readiness Probe
+
+The readiness probe checks whether the application is ready to receive traffic.
+
+```text
+Pod starts
+   |
+Readiness Probe
+   |
+GET /
+   |
+Ready
+   |
+Service sends traffic
+```
+
+## Liveness Probe
+
+The liveness probe checks whether the application remains healthy.
+
+```text
+Application unhealthy
+       |
+Liveness fails
+       |
+Kubernetes restarts container
+```
+
+## Day 2 Terraform File
+
+The Kubernetes resources are defined in:
+
+```text
+environments/prod/kubernetes.tf
+```
+
+The Day 2 flow is:
+
+```text
+Terraform
+   |
+   v
+Kubernetes Provider
+   |
+   v
+production Namespace
+   |
+   v
+NGINX Deployment
+   |
+   v
+ReplicaSet
+   |
+   v
+3 Pods
+   |
+   v
+ClusterIP Service
+```
+
+## Day 2 Deployment Steps
+
+First synchronize the feature branch locally:
+
+```bash
+cd ~/Production
+
+git fetch origin
+
+git checkout feature/day2-kubernetes-workloads
+
+git pull origin feature/day2-kubernetes-workloads
+```
+
+Move to the Terraform production environment:
+
+```bash
+cd environments/prod
+```
+
+Initialize the new Kubernetes provider:
+
+```bash
+terraform init -upgrade
+```
+
+Format and validate:
+
+```bash
+terraform fmt -recursive
+terraform validate
+```
+
+Create a Terraform plan:
+
+```bash
+terraform plan
+```
+
+Review the plan carefully before applying.
+
+After the Day 1 EKS cluster exists and is reachable, apply:
+
+```bash
+terraform apply
+```
+
+## Kubernetes Validation
+
+Configure local kubectl access if required:
+
+```bash
+aws eks update-kubeconfig \
+  --region us-east-1 \
+  --name production-eks-cluster
+```
+
+Then run:
+
+```bash
+kubectl get namespaces
+
+kubectl get deployment -n production
+
+kubectl get replicasets -n production
+
+kubectl get pods -n production
+
+kubectl get pods -n production -o wide
+
+kubectl get svc -n production
+
+kubectl get endpoints -n production
+```
+
+Expected high-level result:
+
+```text
+production namespace
+        |
+        +-- nginx Deployment
+               |
+               +-- 3 Running Pods
+        |
+        +-- nginx-service
+               |
+               +-- ClusterIP
+```
+
+## Day 2 Success Criteria
+
+Day 2 is complete when:
+
+```text
+Terraform validation succeeds
++
+production Namespace exists
++
+NGINX Deployment exists
++
+3 Pods are Running
++
+nginx-service exists
++
+Service endpoints point to the NGINX Pods
+```
+
+## Next Phase
+
+Day 3 can introduce the container-image and external-access layer:
+
+```text
+Application
+   |
+Docker Image
+   |
+Amazon ECR
+   |
+EKS Deployment
+   |
+ClusterIP Service
+   |
+AWS Load Balancer Controller
+   |
+Ingress
+   |
+Application Load Balancer
+```
