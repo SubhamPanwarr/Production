@@ -1,218 +1,150 @@
-# Production AWS Infrastructure Using Terraform
+# Production AWS Infrastructure with Terraform and Amazon EKS
 
 ## Project Overview
 
-This project provisions a production-style AWS infrastructure using **Terraform** with a modular and reusable architecture.
+This project implements a production-style AWS infrastructure using **Terraform** with reusable modules and a multi-VPC architecture.
 
-The infrastructure includes:
+The project currently covers two layers:
 
-- Two VPCs
-- Public and private subnets
-- Bastion host
-- Private EC2 instances
-- Transit Gateway
-- Internet Gateway
-- NAT Gateway
-- Amazon S3
-- S3 VPC Endpoints
-- IAM roles for EC2 to access S3
-- Amazon RDS MySQL
-- RDS DB subnet group
-- Security Groups
-- Remote Terraform state using Amazon S3
+1. **AWS infrastructure layer**
+   - VPC
+   - Subnets
+   - Internet Gateway
+   - NAT Gateway
+   - Transit Gateway
+   - Bastion Host
+   - EC2
+   - S3
+   - VPC Endpoints
+   - IAM
+   - Amazon RDS
 
-The goal of this project is to demonstrate how a DevOps Engineer can design and deploy secure, reusable, production-style AWS infrastructure using Infrastructure as Code.
+2. **Kubernetes layer**
+   - Amazon EKS
+   - Managed Node Groups
+   - Kubernetes Namespace
+   - Deployment
+   - ReplicaSet
+   - Pods
+   - ClusterIP Service
+   - Readiness and Liveness Probes
+   - Resource Requests and Limits
 
----
-
-# Architecture
-
-```text
-                            INTERNET
-                                |
-                                |
-                         Internet Gateway
-                                |
-                     +---------------------+
-                     |       VPC-A         |
-                     |    10.10.0.0/16     |
-                     +---------------------+
-                         |
-             +-----------+-----------+
-             |                       |
-      Public Subnet              Private Subnet
-       us-east-1a                 us-east-1a
-             |                       |
-        Bastion Host               EC2-A
-             |                       |
-             |                       |
-             |                       +--------------------+
-             |                       |                    |
-             |                       | TCP 3306           |
-             |                       v                    v
-             |                  Amazon RDS               S3
-             |                    MySQL                  |
-             |                  Private Subnets          |
-             |                us-east-1a / 1b             |
-             |                                            |
-             |                                      S3 VPC Endpoint
-             |
-             |
-             +---------------- Transit Gateway ----------------+
-                                                            |
-                                                            |
-                                                  +---------------------+
-                                                  |       VPC-B         |
-                                                  |    10.20.0.0/16     |
-                                                  +---------------------+
-                                                            |
-                                                     Private Subnet
-                                                            |
-                                                          EC2-B
-                                                            |
-                                                            v
-                                                     S3 VPC Endpoint
-                                                            |
-                                                            v
-                                                           S3
-```
+Terraform is used to manage both the AWS infrastructure and Kubernetes resources.
 
 ---
 
-# Application and Database Flow
-
-The application flow is:
+# Architecture Overview
 
 ```text
-User / Administrator
-        |
-        v
-Bastion Host
-        |
-        v
-EC2-A
-        |
-        | TCP 3306
-        v
-Amazon RDS MySQL
-```
+                              INTERNET
+                                  |
+                           Internet Gateway
+                                  |
+                    +---------------------------+
+                    |           VPC-A           |
+                    |       10.10.0.0/16        |
+                    +---------------------------+
+                         |                |
+                  Public Subnets     Private Subnets
+                  AZ-A / AZ-B        AZ-A / AZ-B
+                         |                |
+                    Bastion Host          |
+                                          |
+                                   +------+------+
+                                   |             |
+                                  EC2           EKS
+                                                |
+                                      Managed Node Group
+                                         AZ-A / AZ-B
+                                                |
+                                         Kubernetes Pods
+                                                |
+                                          ClusterIP
+                                                |
+                                             Service
 
-The RDS database is deployed inside private subnets and is not publicly accessible.
+                         Amazon RDS MySQL
+                               |
+                         Private Subnets
+                         AZ-A / AZ-B
 
-EC2-A accesses RDS using the RDS DNS endpoint.
 
-Example:
-
-```text
-prod-mysql.xxxxxxxxx.us-east-1.rds.amazonaws.com
-```
-
-The application should always use the RDS endpoint instead of the RDS IP address.
-
----
-
-# AWS Services Used
-
-## Amazon VPC
-
-Two separate VPCs are created:
-
-```text
 VPC-A
-CIDR: 10.10.0.0/16
-
+   |
+   |
+Transit Gateway
+   |
+   |
 VPC-B
-CIDR: 10.20.0.0/16
+10.20.0.0/16
+   |
+Private EC2
+   |
+S3 VPC Endpoint
+   |
+Amazon S3
 ```
-
-Each VPC contains networking components such as:
-
-- Subnets
-- Route Tables
-- Security Groups
-- Internet Gateway
-- NAT Gateway
-- Transit Gateway attachment
 
 ---
 
-# Public and Private Subnets
+# AWS Network Design
 
-VPC-A includes public and private subnets.
+## VPC-A
 
-Example:
+```text
+CIDR: 10.10.0.0/16
+```
+
+VPC-A contains the main application infrastructure.
+
+### Public Subnets
 
 ```text
 10.10.1.0/24
-Public Subnet - us-east-1a
-
-10.10.2.0/24
-Private Subnet - us-east-1a
+us-east-1a
 
 10.10.3.0/24
-Additional Public Subnet - us-east-1b
+us-east-1b
+```
+
+These subnets are used for internet-facing infrastructure such as:
+
+- Bastion Host
+- NAT Gateway
+- Future Application Load Balancer
+
+### Private Subnets
+
+```text
+10.10.2.0/24
+us-east-1a
 
 10.10.4.0/24
-Additional Private Subnet - us-east-1b
+us-east-1b
 ```
 
-The second Availability Zone was introduced to support services such as:
+These subnets are used by:
 
-- RDS DB Subnet Group
-- Future Application Load Balancer
-- High Availability architecture
+- Private EC2 instances
+- Amazon EKS worker nodes
+- Amazon RDS subnet group
 
 ---
 
-# Bastion Host
-
-The Bastion Host is deployed in the public subnet.
-
-It provides secure administrative access to EC2 instances deployed in private subnets.
-
-Access flow:
+## VPC-B
 
 ```text
-Laptop
-   |
-   | SSH 22
-   v
-Bastion Host
-   |
-   | SSH 22
-   v
-Private EC2
+CIDR: 10.20.0.0/16
 ```
 
-Private EC2 instances do not require direct SSH access from the internet.
-
----
-
-# Amazon EC2
-
-Private EC2 instances are deployed inside VPC-A and VPC-B.
-
-Example:
-
-```text
-EC2-A
-Private IP: 10.10.2.x
-
-EC2-B
-Private IP: 10.20.2.x
-```
-
-The instances can communicate between VPCs through Transit Gateway.
+VPC-B contains private infrastructure and communicates with VPC-A through AWS Transit Gateway.
 
 ---
 
 # Transit Gateway
 
-AWS Transit Gateway is used to connect VPC-A and VPC-B.
-
-Without Transit Gateway, multiple VPC-to-VPC connections could require many individual peering connections.
-
-Architecture:
+AWS Transit Gateway provides centralized connectivity between VPC-A and VPC-B.
 
 ```text
 VPC-A
@@ -224,13 +156,57 @@ Transit Gateway
 VPC-B
 ```
 
-Transit Gateway provides centralized routing between connected VPCs.
+Routes are configured in both VPCs so resources can communicate through the Transit Gateway.
+
+This architecture is easier to scale than creating multiple individual VPC peering connections when the number of VPCs increases.
+
+---
+
+# Bastion Host
+
+The Bastion Host is deployed in a public subnet in VPC-A.
+
+It provides administrative SSH access to resources located in private subnets.
+
+```text
+Administrator Laptop
+        |
+        | SSH 22
+        v
+    Bastion Host
+        |
+        | SSH 22
+        v
+    Private EC2
+```
+
+Private EC2 instances do not need direct SSH access from the internet.
+
+---
+
+# Amazon EC2
+
+Private EC2 instances are deployed inside VPC-A and VPC-B.
+
+Example:
+
+```text
+EC2-A
+VPC-A
+Private IP: 10.10.2.x
+
+EC2-B
+VPC-B
+Private IP: 10.20.2.x
+```
+
+The instances can communicate between VPCs using Transit Gateway routing.
 
 ---
 
 # Amazon S3
 
-Amazon S3 is used for application or infrastructure-related object storage.
+Amazon S3 is used for application and infrastructure-related object storage.
 
 Example bucket:
 
@@ -238,86 +214,70 @@ Example bucket:
 subhampanwarr-production-app-data-2026
 ```
 
-Private EC2 instances access S3 through an S3 Gateway VPC Endpoint.
-
-Traffic flow:
+Private infrastructure accesses S3 through an S3 Gateway VPC Endpoint.
 
 ```text
-EC2
- |
- |
+Private EC2
+     |
+     v
 S3 VPC Endpoint
- |
- |
+     |
+     v
 Amazon S3
 ```
 
-This avoids sending S3 traffic through the public internet.
+Benefits include:
 
----
-
-# S3 VPC Endpoint
-
-Gateway VPC Endpoints are configured for Amazon S3.
-
-Benefits:
-
-- Private communication with S3
-- No public internet dependency
-- No NAT Gateway required for S3 traffic
+- Private S3 communication
+- Reduced dependency on public internet access
+- No NAT Gateway requirement for S3 traffic
 - Better security
-- Potential NAT data-transfer cost reduction
+- Potential NAT Gateway cost reduction
 
 ---
 
-# IAM Role for EC2
+# IAM for EC2 and S3
 
 EC2 instances use IAM roles instead of storing AWS access keys directly on the server.
 
-Architecture:
-
 ```text
 EC2
  |
- |
+ v
 IAM Role
  |
- |
+ v
 Amazon S3
 ```
 
-This follows AWS security best practices.
+This follows the AWS principle of using temporary credentials and least-privilege access.
 
 ---
 
 # Amazon RDS MySQL
 
-Amazon RDS is used to provide a managed MySQL database.
+Amazon RDS provides the managed relational database layer.
 
-Configuration used in this project:
+Current configuration:
 
 ```text
-Engine           : MySQL
-Port             : 3306
-Storage          : GP3
-Allocated Storage: 20 GB
-Public Access    : Disabled
-Encryption       : Enabled
-Backup Retention : 1 day
-Multi-AZ         : Disabled for lab environment
+Engine            : MySQL
+Port              : 3306
+Storage           : GP3
+Allocated Storage : 20 GB
+Public Access     : Disabled
+Encryption        : Enabled
+Backup Retention  : 1 day
+Multi-AZ          : Disabled for lab environment
 ```
 
-The backup retention value is configured as one day because the current AWS account has Free Tier restrictions.
-
-For a real production environment, backup retention should normally be increased according to the organization's recovery and compliance requirements.
+For a real production environment, backup retention and Multi-AZ configuration should be selected according to business RTO, RPO, compliance, and availability requirements.
 
 ---
 
 # RDS DB Subnet Group
 
-RDS requires a DB subnet group containing private subnets from multiple Availability Zones.
-
-Example:
+RDS uses private subnets across two Availability Zones.
 
 ```text
 Private Subnet
@@ -332,38 +292,38 @@ us-east-1b
 Architecture:
 
 ```text
-DB Subnet Group
-       |
-       +---- Private Subnet - AZ-A
-       |
-       +---- Private Subnet - AZ-B
+RDS DB Subnet Group
+        |
+        +---- us-east-1a
+        |
+        +---- us-east-1b
 ```
 
-The database itself remains private.
+The database remains private.
 
 ---
 
 # RDS Security
 
-RDS does not allow direct access from the internet.
+RDS does not allow direct internet access.
 
-Instead, its security group permits MySQL traffic only from the EC2 application security group.
-
-```text
-EC2 Security Group
-       |
-       | TCP 3306
-       v
-RDS Security Group
-```
-
-This is more secure than allowing:
+The database security group allows MySQL traffic only from the approved application security group.
 
 ```text
-3306 from 0.0.0.0/0
+Application Security Group
+          |
+          | TCP 3306
+          v
+     RDS Security Group
 ```
 
-which should never be used for a production database.
+Opening MySQL directly to:
+
+```text
+0.0.0.0/0
+```
+
+should not be used for a production database.
 
 ---
 
@@ -383,15 +343,13 @@ Port:
 3306
 ```
 
-Do not configure applications using the database private IP because the IP can change.
+Applications should use the RDS DNS endpoint instead of a database IP address because the underlying IP may change.
 
 ---
 
 # Testing RDS Connectivity
 
-RDS is private, so it cannot normally be accessed directly from a laptop.
-
-The correct path is:
+Because RDS is private, connectivity should be tested from a resource inside the VPC.
 
 ```text
 Laptop
@@ -406,25 +364,13 @@ EC2-A
 RDS
 ```
 
-From EC2-A, connectivity can be tested with:
+Test connectivity:
 
 ```bash
 nc -zv <RDS-ENDPOINT> 3306
 ```
 
-Example:
-
-```bash
-nc -zv prod-mysql.xxxxxxxxx.us-east-1.rds.amazonaws.com 3306
-```
-
-Successful output should indicate that TCP port `3306` is reachable.
-
----
-
-# Connecting to MySQL
-
-From EC2-A:
+Connect using MySQL:
 
 ```bash
 mysql \
@@ -434,39 +380,266 @@ mysql \
   -p
 ```
 
-Then verify the database:
+---
 
-```sql
-SHOW DATABASES;
+# Amazon EKS
+
+Amazon EKS provides the Kubernetes orchestration layer for the project.
+
+AWS manages the Kubernetes control plane while worker nodes run inside the existing private subnets in VPC-A.
+
+```text
+                  AWS Managed EKS Control Plane
+                              |
+                    +---------+---------+
+                    |                   |
+              Private Subnet       Private Subnet
+               us-east-1a           us-east-1b
+                    |                   |
+              Worker Node-1       Worker Node-2
+                    |                   |
+                  Pods                Pods
 ```
 
-Select the application database:
+---
 
-```sql
-USE productiondb;
+# EKS Managed Node Group
+
+The EKS worker nodes are managed through an EKS Managed Node Group.
+
+Current configuration:
+
+```text
+Instance Type : t3.medium
+Capacity Type : ON_DEMAND
+
+Minimum Nodes : 2
+Desired Nodes : 2
+Maximum Nodes : 4
 ```
 
-Create a test table:
+Worker nodes are deployed in:
 
-```sql
-CREATE TABLE users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100)
-);
+```text
+10.10.2.0/24
+us-east-1a
+
+10.10.4.0/24
+us-east-1b
 ```
 
-Insert test data:
+This provides worker-node capacity across multiple Availability Zones.
 
-```sql
-INSERT INTO users (name)
-VALUES ('Shubham');
+---
+
+# EKS IAM Configuration
+
+## EKS Control Plane Role
+
+The EKS control plane uses:
+
+```text
+AmazonEKSClusterPolicy
 ```
 
-Verify:
+## Worker Node Role
 
-```sql
-SELECT * FROM users;
+Managed worker nodes use:
+
+```text
+AmazonEKSWorkerNodePolicy
+AmazonEC2ContainerRegistryPullOnly
+AmazonEKS_CNI_Policy
 ```
+
+The current implementation attaches VPC CNI permissions to the worker-node role.
+
+This can later be improved by using dedicated workload identity or add-on-specific IAM permissions.
+
+---
+
+# Kubernetes Provider
+
+Terraform also manages Kubernetes resources through the HashiCorp Kubernetes provider.
+
+```text
+Terraform
+   |
+   +---- AWS Provider
+   |       |
+   |       +---- VPC
+   |       +---- IAM
+   |       +---- EC2
+   |       +---- RDS
+   |       +---- EKS
+   |
+   +---- Kubernetes Provider
+           |
+           +---- Namespace
+           +---- Deployment
+           +---- Pods
+           +---- Service
+```
+
+Terraform authenticates to the EKS API server using the EKS cluster endpoint and certificate authority information.
+
+---
+
+# Kubernetes Namespace
+
+Application workloads are deployed inside the:
+
+```text
+production
+```
+
+namespace.
+
+```text
+EKS Cluster
+|
++-- kube-system
+|
++-- production
+     |
+     +-- nginx Deployment
+     |
+     +-- nginx-service
+```
+
+Namespaces provide logical separation of Kubernetes resources.
+
+---
+
+# Kubernetes Deployment
+
+The current Kubernetes workload uses an NGINX Deployment.
+
+```text
+Deployment
+    |
+    v
+ReplicaSet
+    |
+    +---- Pod-1
+    +---- Pod-2
+    +---- Pod-3
+```
+
+Current replica count:
+
+```text
+3
+```
+
+The Deployment maintains the desired number of Pods.
+
+If a Pod fails, Kubernetes creates a replacement Pod to restore the desired state.
+
+---
+
+# Labels and Selectors
+
+The application Pods use:
+
+```text
+app = nginx
+```
+
+The Kubernetes Service uses the same selector.
+
+```text
+nginx-service
+      |
+      | selector: app=nginx
+      |
+   +--+--+
+   |  |  |
+ Pod Pod Pod
+```
+
+Labels and selectors allow Kubernetes resources to identify and communicate with the correct workloads.
+
+---
+
+# ClusterIP Service
+
+The application is currently exposed internally using a ClusterIP Service.
+
+```text
+nginx-service
+      |
+      | TCP 80
+      |
++-----+-----+
+|     |     |
+Pod-1 Pod-2 Pod-3
+```
+
+The ClusterIP provides a stable internal endpoint even when individual Pod IP addresses change.
+
+The application is not currently exposed directly to the public internet through Kubernetes.
+
+---
+
+# Resource Requests and Limits
+
+Each NGINX container defines CPU and memory requests and limits.
+
+```text
+Requests
+CPU    : 100m
+Memory : 128Mi
+
+Limits
+CPU    : 250m
+Memory : 256Mi
+```
+
+Requests help Kubernetes decide which node has enough capacity to schedule the Pod.
+
+Limits define the maximum resources that the container can consume.
+
+---
+
+# Readiness Probe
+
+The readiness probe determines whether a Pod is ready to receive application traffic.
+
+```text
+Pod Starts
+    |
+    v
+Readiness Probe
+    |
+ GET /
+    |
+    v
+Ready
+    |
+    v
+Service sends traffic
+```
+
+If readiness fails, Kubernetes keeps the Pod out of the Service endpoints until it becomes ready.
+
+---
+
+# Liveness Probe
+
+The liveness probe determines whether the application is still healthy.
+
+```text
+Application becomes unhealthy
+            |
+            v
+      Liveness fails
+            |
+            v
+Kubernetes restarts container
+```
+
+This helps recover from applications that are running but no longer functioning correctly.
 
 ---
 
@@ -479,12 +652,14 @@ Production/
 │   └── prod/
 │       ├── backend.tf
 │       ├── main.tf
+│       ├── kubernetes.tf
 │       ├── outputs.tf
 │       ├── providers.tf
 │       ├── variables.tf
 │       └── terraform.tfvars
 │
 ├── modules/
+│   │
 │   ├── vpc/
 │   │   ├── main.tf
 │   │   ├── variables.tf
@@ -505,7 +680,9 @@ Production/
 │   │
 │   ├── iam-ec2-s3/
 │   │
-│   └── rds/
+│   ├── rds/
+│   │
+│   └── eks/
 │       ├── main.tf
 │       ├── variables.tf
 │       └── outputs.tf
@@ -520,16 +697,16 @@ Production/
 
 Terraform state is stored remotely in Amazon S3.
 
-This provides:
+Benefits include:
 
 - Centralized state storage
-- Team collaboration
 - State persistence
-- Protection against accidental local state loss
+- Team collaboration
+- Protection against accidental loss of local state
 
-Terraform state files should never be committed to GitHub.
+Sensitive and generated Terraform files should not be committed to GitHub.
 
-Files such as the following must remain ignored:
+Examples:
 
 ```text
 .terraform/
@@ -545,22 +722,28 @@ plan.txt
 
 # Terraform Deployment
 
-Move to the production environment directory:
+Move to the production Terraform environment:
 
 ```bash
 cd ~/Production/environments/prod
 ```
 
-Format the Terraform code:
-
-```bash
-terraform fmt -recursive
-```
-
-Initialize:
+Initialize Terraform:
 
 ```bash
 terraform init
+```
+
+When a new provider has been introduced:
+
+```bash
+terraform init -upgrade
+```
+
+Format:
+
+```bash
+terraform fmt -recursive
 ```
 
 Validate:
@@ -569,13 +752,13 @@ Validate:
 terraform validate
 ```
 
-Create a Terraform plan:
+Create a plan:
 
 ```bash
 terraform plan -out=tfplan
 ```
 
-Create a human-readable copy:
+Generate a readable plan:
 
 ```bash
 terraform show -no-color tfplan > plan.txt
@@ -587,7 +770,7 @@ Review:
 less plan.txt
 ```
 
-Apply:
+Apply only after reviewing the plan:
 
 ```bash
 terraform apply tfplan
@@ -595,220 +778,244 @@ terraform apply tfplan
 
 ---
 
+# EKS and Kubernetes Validation
+
+Configure `kubectl`:
+
+```bash
+aws eks update-kubeconfig \
+  --region us-east-1 \
+  --name production-eks-cluster
+```
+
+Check the cluster:
+
+```bash
+kubectl cluster-info
+```
+
+Check worker nodes:
+
+```bash
+kubectl get nodes
+kubectl get nodes -o wide
+```
+
+Check system Pods:
+
+```bash
+kubectl get pods -n kube-system
+```
+
+Check namespaces:
+
+```bash
+kubectl get namespaces
+```
+
+Check production workload:
+
+```bash
+kubectl get deployment -n production
+kubectl get replicasets -n production
+kubectl get pods -n production
+kubectl get pods -n production -o wide
+```
+
+Check the Kubernetes Service:
+
+```bash
+kubectl get svc -n production
+kubectl describe svc nginx-service -n production
+```
+
+Check Service endpoints:
+
+```bash
+kubectl get endpoints -n production
+```
+
+Expected application structure:
+
+```text
+production Namespace
+        |
+        +---- nginx Deployment
+        |        |
+        |        +---- 3 Pods
+        |
+        +---- nginx-service
+                 |
+                 +---- ClusterIP
+```
+
+---
+
 # Terraform State Validation
 
-To list resources:
+List all Terraform-managed resources:
 
 ```bash
 terraform state list
 ```
 
-To check RDS resources:
+Check EKS resources:
+
+```bash
+terraform state list | grep eks
+```
+
+Check RDS resources:
 
 ```bash
 terraform state list | grep rds
 ```
 
-Example:
-
-```text
-module.rds.aws_db_instance.this
-module.rds.aws_db_subnet_group.this
-module.rds.aws_security_group.rds
-```
-
-To inspect RDS:
+Inspect a resource:
 
 ```bash
-terraform state show module.rds.aws_db_instance.this
-```
-
-To retrieve the endpoint:
-
-```bash
-terraform state show module.rds.aws_db_instance.this | grep address
+terraform state show <RESOURCE-ADDRESS>
 ```
 
 ---
 
-# Important Security Practices
+# Security Practices
 
-This project follows several security principles.
+The project currently demonstrates several security practices.
 
-### Private EC2 Instances
+## Private Application Infrastructure
 
-Application servers are deployed in private subnets.
+Application infrastructure and EKS worker nodes are deployed in private subnets.
 
-### Private RDS
+## Private RDS
 
-RDS is not publicly accessible.
+Amazon RDS is not publicly accessible.
 
-### Security Group Referencing
+## Security Group Referencing
 
-RDS accepts traffic from the application EC2 Security Group instead of allowing entire CIDR ranges unnecessarily.
+Database access is controlled using security group references rather than exposing database ports publicly.
 
-### Bastion Access
+## Bastion Access
 
-Administrative SSH access occurs through a Bastion Host.
+Administrative SSH connectivity is routed through a Bastion Host.
 
-### IAM Roles
+## IAM Roles
 
-EC2 instances use IAM roles instead of hard-coded AWS access keys.
+AWS services use IAM roles rather than hard-coded AWS access keys.
 
-### S3 VPC Endpoint
+## S3 VPC Endpoint
 
-S3 can be accessed privately through a VPC Endpoint.
+Private resources can access S3 through an AWS Gateway VPC Endpoint.
 
-### Encryption
+## Encryption
 
 RDS storage encryption is enabled.
 
----
+## Multi-AZ Network Design
 
-# Why RDS Cannot Be Accessed Directly From Laptop
-
-The RDS endpoint resolves to a private IP address.
-
-Example:
-
-```text
-prod-mysql.xxxxx.rds.amazonaws.com
-        |
-        v
-10.10.4.x
-```
-
-A local laptop does not normally have a route to:
-
-```text
-10.10.0.0/16
-```
-
-Therefore:
-
-```text
-DNS resolution = successful
-```
-
-does not necessarily mean:
-
-```text
-Network connectivity = successful
-```
-
-RDS connectivity should be tested from the EC2 application server inside the VPC.
+The architecture contains subnets across multiple Availability Zones to support highly available services such as EKS and RDS.
 
 ---
 
 # High Availability
 
-The current lab environment uses:
+The EKS worker-node layer spans:
 
 ```text
-RDS Multi-AZ = false
+us-east-1a
+us-east-1b
 ```
 
-to reduce lab cost.
+with multiple worker nodes.
 
-For real production environments, it can be changed to:
+The RDS lab currently uses:
+
+```text
+Multi-AZ = false
+```
+
+to reduce cost.
+
+For a production environment:
 
 ```hcl
 multi_az = true
 ```
 
-This provides an RDS standby instance in another Availability Zone.
-
----
-
-# Production Improvements
-
-Future improvements for this infrastructure include:
-
-- Application Load Balancer
-- Auto Scaling Group
-- Multiple EC2 application instances
-- HTTPS using ACM
-- Route 53
-- AWS WAF
-- RDS Multi-AZ
-- RDS Read Replica
-- AWS Secrets Manager
-- CloudWatch alarms
-- SNS notifications
-- AWS Backup
-- GitHub Actions CI/CD
-- Dev, staging, and production environments
-
-A future highly available architecture would look like:
-
-```text
-                    Internet
-                       |
-                       v
-              Application Load Balancer
-                       |
-             ---------------------
-             |                   |
-           EC2-A               EC2-B
-        us-east-1a          us-east-1b
-             |                   |
-             ---------+-----------
-                       |
-                       v
-                 RDS Multi-AZ
-                 /          \
-             Primary       Standby
-             AZ-A           AZ-B
-```
+can be enabled according to availability requirements.
 
 ---
 
 # Key Concepts Demonstrated
 
-This project demonstrates practical knowledge of:
+This project demonstrates practical experience with:
 
 - Infrastructure as Code
 - Terraform Modules
 - Terraform Remote State
-- AWS VPC
+- AWS Provider
+- Kubernetes Provider
+- Amazon VPC
 - Public and Private Subnets
+- Multi-AZ design
 - Route Tables
 - Internet Gateway
 - NAT Gateway
-- Security Groups
+- Transit Gateway
 - Bastion Host
 - Amazon EC2
 - IAM Roles
 - Amazon S3
 - VPC Endpoints
-- Transit Gateway
 - Amazon RDS
 - RDS DB Subnet Groups
-- Private database architecture
-- Multi-AZ concepts
+- Amazon EKS
+- EKS Managed Node Groups
+- Kubernetes Namespaces
+- Deployments
+- ReplicaSets
+- Pods
+- Labels and Selectors
+- ClusterIP Services
+- Resource Requests and Limits
+- Readiness Probes
+- Liveness Probes
+- Kubernetes self-healing
 - AWS networking
-- Secure application-to-database connectivity
+- Private infrastructure design
 
-## Amazon EKS – Day 1 Implementation
+---
 
-The production infrastructure has been extended with Amazon EKS to provide a Kubernetes-based application orchestration layer.
-
-### EKS Architecture
-
-The EKS cluster reuses the existing private subnets in VPC-A across multiple Availability Zones.
+# Current Implementation Flow
 
 ```text
-                    Amazon EKS Control Plane
-                       Managed by AWS
-                              |
-                   -----------------------
-                   |                     |
-            Private Subnet        Private Subnet
-              us-east-1a            us-east-1b
-                   |                     |
-            Worker Node-1         Worker Node-2
-                   |                     |
-                  Pods                  Pods
+Terraform
+    |
+    +---------------- AWS Infrastructure ----------------+
+    |                                                   |
+    |                                                   v
+    |                                          VPC / IAM / RDS / EKS
+    |
+    +------------- Kubernetes Provider -----------------+
+                                                        |
+                                                        v
+                                                production Namespace
+                                                        |
+                                                        v
+                                                  NGINX Deployment
+                                                        |
+                                                        v
+                                                    ReplicaSet
+                                                        |
+                                             +----------+----------+
+                                             |          |          |
+                                           Pod-1      Pod-2      Pod-3
+                                             \          |          /
+                                              \         |         /
+                                                ClusterIP Service
+```
+
+---
 
 # Author
 
@@ -816,11 +1023,13 @@ The EKS cluster reuses the existing private subnets in VPC-A across multiple Ava
 
 AWS / DevOps Engineer
 
-Technologies:
+Technologies used in this project:
 
 ```text
 AWS
 Terraform
+Amazon EKS
+Kubernetes
 Linux
 Git
 GitHub
@@ -831,574 +1040,4 @@ S3
 Transit Gateway
 IAM
 Networking
-```
-
-
----
-
-# Amazon EKS - Day 1 Implementation
-
-The production infrastructure has been extended with **Amazon EKS** so Kubernetes workloads can run on AWS while reusing the existing VPC-A networking.
-
-## Day 1 Goal
-
-Day 1 focuses only on creating the Kubernetes infrastructure foundation:
-
-- EKS control plane
-- EKS IAM roles
-- Managed Node Group
-- Two private subnets across two Availability Zones
-- Node scaling configuration
-- Kubernetes cluster access through `kubectl`
-
-Application Deployments, Services, Ingress, ALB, HPA, persistent storage, monitoring, and CI/CD will be added in later phases.
-
-## EKS Network Placement
-
-The EKS cluster uses the existing VPC-A private subnet in `us-east-1a` and the additional private subnet in `us-east-1b`.
-
-```text
-VPC-A - 10.10.0.0/16
-|
-+-- Private Subnet - 10.10.2.0/24 - us-east-1a
-|      |
-|      +-- EKS Worker Node
-|
-+-- Private Subnet - 10.10.4.0/24 - us-east-1b
-       |
-       +-- EKS Worker Node
-```
-
-The EKS control plane is managed by AWS. The application compute layer runs on an EKS Managed Node Group inside the private subnets.
-
-## Day 1 EKS Architecture
-
-```text
-                     AWS Managed EKS Control Plane
-                                |
-                 +--------------+--------------+
-                 |                             |
-        Private Subnet AZ-A           Private Subnet AZ-B
-          10.10.2.0/24                  10.10.4.0/24
-                 |                             |
-          Worker Node-1                  Worker Node-2
-                 |                             |
-               Pods                          Pods
-```
-
-## Managed Node Group Configuration
-
-```text
-Instance Type : t3.medium
-Capacity Type : ON_DEMAND
-Minimum Nodes : 2
-Desired Nodes : 2
-Maximum Nodes : 4
-```
-
-## Terraform EKS Module
-
-A reusable EKS module has been added:
-
-```text
-modules/
-└── eks/
-    ├── main.tf
-    ├── variables.tf
-    └── outputs.tf
-```
-
-The production environment calls this module from:
-
-```text
-environments/prod/main.tf
-```
-
-The EKS module receives the two real private subnet IDs:
-
-```hcl
-private_subnet_ids = [
-  module.vpc_a.private_subnet_id,
-  aws_subnet.vpc_a_private_2.id
-]
-```
-
-This keeps the worker nodes private while spreading them across two Availability Zones.
-
-## IAM Configuration
-
-The EKS control plane uses an IAM role with:
-
-```text
-AmazonEKSClusterPolicy
-```
-
-The managed worker nodes use an EC2 IAM role with:
-
-```text
-AmazonEKSWorkerNodePolicy
-AmazonEC2ContainerRegistryPullOnly
-AmazonEKS_CNI_Policy
-```
-
-For this first implementation, the VPC CNI permissions are attached to the node role. A later security-hardening phase can move add-on permissions to dedicated workload identities.
-
-## Validate Terraform
-
-From the production environment:
-
-```bash
-cd ~/Production/environments/prod
-
-terraform fmt -recursive
-terraform validate
-terraform plan
-```
-
-Before applying, verify that Terraform is creating the expected EKS and IAM resources and is **not unexpectedly destroying or replacing** existing VPC, subnet, RDS, Transit Gateway, NAT Gateway, or S3 resources.
-
-## Apply EKS
-
-After reviewing the plan:
-
-```bash
-terraform apply
-```
-
-## Configure kubectl
-
-After the cluster has been created:
-
-```bash
-aws eks update-kubeconfig \
-  --region us-east-1 \
-  --name production-eks-cluster
-```
-
-Validate cluster access:
-
-```bash
-kubectl cluster-info
-kubectl get nodes
-kubectl get nodes -o wide
-kubectl get pods -A
-```
-
-The Day 1 success condition is:
-
-```text
-EKS cluster created
-+
-Managed Node Group created
-+
-Two worker nodes joined
-+
-kubectl connected
-+
-Worker nodes show Ready
-```
-
-## Next Kubernetes Phases
-
-The planned Kubernetes implementation will progressively add:
-
-1. Namespace
-2. Deployment and ReplicaSet
-3. Pods
-4. ClusterIP Service
-5. Amazon ECR
-6. AWS Load Balancer Controller
-7. Ingress and ALB
-8. ConfigMaps and Secrets
-9. Readiness and Liveness Probes
-10. Resource Requests and Limits
-11. Metrics Server and HPA
-12. Karpenter or node autoscaling
-13. EBS CSI, PV, and PVC
-14. Prometheus and Grafana
-15. Jenkins CI/CD deployment into EKS
-
-
----
-
-# Amazon EKS - Day 2 Kubernetes Workloads
-
-Day 2 introduces the first Kubernetes application workloads on top of the EKS cluster created on Day 1.
-
-## Day 2 Goal
-
-The objective is to learn how Terraform can manage Kubernetes resources inside Amazon EKS.
-
-The following Kubernetes resources are created:
-
-- Terraform Kubernetes provider
-- `production` Namespace
-- NGINX Deployment
-- 3 Pod replicas
-- Labels and selectors
-- ClusterIP Service
-- CPU and memory requests
-- CPU and memory limits
-- Readiness probe
-- Liveness probe
-
-Ingress, ALB, ECR, HPA, persistent storage, and monitoring are intentionally reserved for later phases.
-
-## Day 2 Architecture
-
-```text
-                    Amazon EKS
-                        |
-                 production Namespace
-                        |
-                    Deployment
-                    nginx
-                        |
-                    ReplicaSet
-                        |
-             +----------+----------+
-             |          |          |
-           Pod-1      Pod-2      Pod-3
-             \          |          /
-              \         |         /
-                 nginx-service
-                   ClusterIP
-```
-
-The Kubernetes Service provides one stable internal endpoint for the three NGINX Pods.
-
-## Terraform Kubernetes Provider
-
-Terraform now includes the HashiCorp Kubernetes provider.
-
-```hcl
-kubernetes = {
-  source  = "hashicorp/kubernetes"
-  version = "~> 2.0"
-}
-```
-
-Terraform authenticates to the EKS API server using the existing EKS cluster outputs.
-
-```text
-Terraform
-   |
-   +-- AWS Provider
-   |      |
-   |      +-- VPC
-   |      +-- EKS
-   |      +-- IAM
-   |      +-- RDS
-   |
-   +-- Kubernetes Provider
-          |
-          +-- Namespace
-          +-- Deployment
-          +-- Pods
-          +-- Service
-```
-
-## Production Namespace
-
-The namespace separates production Kubernetes resources logically from system workloads.
-
-```text
-EKS Cluster
-|
-+-- kube-system
-|
-+-- production
-     |
-     +-- nginx Deployment
-     +-- nginx-service
-```
-
-Validation:
-
-```bash
-kubectl get namespaces
-kubectl get pods -n production
-```
-
-## NGINX Deployment
-
-The Deployment maintains three replicas.
-
-```text
-Desired replicas = 3
-
-Deployment
-   |
-ReplicaSet
-   |
-+-- Pod-1
-+-- Pod-2
-+-- Pod-3
-```
-
-If one Pod fails, Kubernetes attempts to restore the desired replica count.
-
-Validation:
-
-```bash
-kubectl get deployment -n production
-kubectl get replicasets -n production
-kubectl get pods -n production
-kubectl get pods -n production -o wide
-```
-
-## Labels and Selectors
-
-The Pods use:
-
-```text
-app = nginx
-```
-
-The Service uses the same label selector.
-
-```text
-nginx-service
-      |
- selector
- app=nginx
-      |
-+-----+-----+
-|     |     |
-Pod   Pod   Pod
-```
-
-This is how the Service identifies which Pods should receive traffic.
-
-## ClusterIP Service
-
-The service is internal to the Kubernetes cluster.
-
-```text
-Service Type = ClusterIP
-
-nginx-service
-      |
-      | TCP 80
-      |
-+-----+-----+
-|     |     |
-Pod-1 Pod-2 Pod-3
-```
-
-Validation:
-
-```bash
-kubectl get svc -n production
-kubectl describe svc nginx-service -n production
-kubectl get endpoints -n production
-```
-
-The application is intentionally not exposed to the public internet on Day 2.
-
-## Resource Requests and Limits
-
-Each NGINX container includes CPU and memory resource controls.
-
-```text
-Requests
-CPU    = 100m
-Memory = 128Mi
-
-Limits
-CPU    = 250m
-Memory = 256Mi
-```
-
-Requests help Kubernetes decide where the Pod can be scheduled.
-
-Limits define the maximum resources available to the container.
-
-## Readiness Probe
-
-The readiness probe checks whether the application is ready to receive traffic.
-
-```text
-Pod starts
-   |
-Readiness Probe
-   |
-GET /
-   |
-Ready
-   |
-Service sends traffic
-```
-
-## Liveness Probe
-
-The liveness probe checks whether the application remains healthy.
-
-```text
-Application unhealthy
-       |
-Liveness fails
-       |
-Kubernetes restarts container
-```
-
-## Day 2 Terraform File
-
-The Kubernetes resources are defined in:
-
-```text
-environments/prod/kubernetes.tf
-```
-
-The Day 2 flow is:
-
-```text
-Terraform
-   |
-   v
-Kubernetes Provider
-   |
-   v
-production Namespace
-   |
-   v
-NGINX Deployment
-   |
-   v
-ReplicaSet
-   |
-   v
-3 Pods
-   |
-   v
-ClusterIP Service
-```
-
-## Day 2 Deployment Steps
-
-First synchronize the feature branch locally:
-
-```bash
-cd ~/Production
-
-git fetch origin
-
-git checkout feature/day2-kubernetes-workloads
-
-git pull origin feature/day2-kubernetes-workloads
-```
-
-Move to the Terraform production environment:
-
-```bash
-cd environments/prod
-```
-
-Initialize the new Kubernetes provider:
-
-```bash
-terraform init -upgrade
-```
-
-Format and validate:
-
-```bash
-terraform fmt -recursive
-terraform validate
-```
-
-Create a Terraform plan:
-
-```bash
-terraform plan
-```
-
-Review the plan carefully before applying.
-
-After the Day 1 EKS cluster exists and is reachable, apply:
-
-```bash
-terraform apply
-```
-
-## Kubernetes Validation
-
-Configure local kubectl access if required:
-
-```bash
-aws eks update-kubeconfig \
-  --region us-east-1 \
-  --name production-eks-cluster
-```
-
-Then run:
-
-```bash
-kubectl get namespaces
-
-kubectl get deployment -n production
-
-kubectl get replicasets -n production
-
-kubectl get pods -n production
-
-kubectl get pods -n production -o wide
-
-kubectl get svc -n production
-
-kubectl get endpoints -n production
-```
-
-Expected high-level result:
-
-```text
-production namespace
-        |
-        +-- nginx Deployment
-               |
-               +-- 3 Running Pods
-        |
-        +-- nginx-service
-               |
-               +-- ClusterIP
-```
-
-## Day 2 Success Criteria
-
-Day 2 is complete when:
-
-```text
-Terraform validation succeeds
-+
-production Namespace exists
-+
-NGINX Deployment exists
-+
-3 Pods are Running
-+
-nginx-service exists
-+
-Service endpoints point to the NGINX Pods
-```
-
-## Next Phase
-
-Day 3 can introduce the container-image and external-access layer:
-
-```text
-Application
-   |
-Docker Image
-   |
-Amazon ECR
-   |
-EKS Deployment
-   |
-ClusterIP Service
-   |
-AWS Load Balancer Controller
-   |
-Ingress
-   |
-Application Load Balancer
 ```
