@@ -1402,3 +1402,496 @@ Ingress
    |
 Application Load Balancer
 ```
+
+
+---
+
+# Amazon EKS - Day 3 Container Image and External Access Plan
+
+Day 3 introduces the container-image and external-access layer for the application.
+
+The target flow is:
+
+```text
+Application Source Code
+        |
+        v
+Dockerfile
+        |
+        v
+Docker Image
+        |
+        v
+Amazon ECR
+        |
+        v
+EKS Deployment
+        |
+        v
+ClusterIP Service
+        |
+        v
+AWS Load Balancer Controller
+        |
+        v
+Ingress
+        |
+        v
+Application Load Balancer
+        |
+        v
+Internet User
+```
+
+## Day 3 Objective
+
+The goal is to replace the public NGINX image with an application image stored in Amazon ECR and then expose the application externally through an AWS Application Load Balancer.
+
+The main concepts introduced are:
+
+- Docker image build
+- Amazon ECR
+- Private container image
+- EKS image pull
+- AWS Load Balancer Controller
+- IAM for the controller
+- Kubernetes Ingress
+- Application Load Balancer
+- Public subnet discovery
+- ALB health checks
+- External application access
+
+## Recommended Implementation Sequence
+
+### Step 1 - Create an Amazon ECR Repository
+
+Create an ECR repository using Terraform.
+
+Example logical flow:
+
+```text
+Terraform
+   |
+   v
+Amazon ECR
+   |
+   v
+production-app
+```
+
+Validation:
+
+```bash
+aws ecr describe-repositories --region us-east-1
+```
+
+### Step 2 - Create the Application Dockerfile
+
+Add a Dockerfile for the application.
+
+Example:
+
+```dockerfile
+FROM nginx:alpine
+
+COPY index.html /usr/share/nginx/html/index.html
+
+EXPOSE 80
+```
+
+The application flow becomes:
+
+```text
+Application Source
+      |
+      v
+Dockerfile
+      |
+      v
+Docker Image
+```
+
+### Step 3 - Build the Docker Image
+
+Build the image locally.
+
+```bash
+docker build -t production-app:v1 .
+```
+
+Verify:
+
+```bash
+docker images
+```
+
+### Step 4 - Authenticate Docker to Amazon ECR
+
+Authenticate using AWS CLI.
+
+```bash
+aws ecr get-login-password \
+  --region us-east-1 \
+| docker login \
+  --username AWS \
+  --password-stdin <ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com
+```
+
+### Step 5 - Tag the Docker Image
+
+Tag the local image with the ECR repository URI.
+
+```bash
+docker tag production-app:v1 \
+<ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com/production-app:v1
+```
+
+### Step 6 - Push the Image to Amazon ECR
+
+Push the image:
+
+```bash
+docker push \
+<ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com/production-app:v1
+```
+
+Verify:
+
+```bash
+aws ecr list-images \
+  --repository-name production-app \
+  --region us-east-1
+```
+
+### Step 7 - Update the EKS Deployment
+
+Replace the public NGINX image:
+
+```text
+nginx:1.27-alpine
+```
+
+with the private ECR image:
+
+```text
+<ACCOUNT-ID>.dkr.ecr.us-east-1.amazonaws.com/production-app:v1
+```
+
+The new flow becomes:
+
+```text
+Amazon ECR
+    |
+    v
+EKS Worker Nodes
+    |
+    v
+Deployment
+    |
+    v
+Pods
+```
+
+Validate:
+
+```bash
+kubectl get pods -n production
+kubectl describe pod <pod-name> -n production
+```
+
+### Step 8 - Keep the ClusterIP Service
+
+The application remains internally exposed through the existing ClusterIP Service.
+
+```text
+nginx-service
+      |
+      | TCP 80
+      |
++-----+-----+
+|     |     |
+Pod-1 Pod-2 Pod-3
+```
+
+The Service remains the stable internal endpoint used by Ingress.
+
+### Step 9 - Configure IAM for AWS Load Balancer Controller
+
+The AWS Load Balancer Controller requires permission to create and manage resources such as:
+
+- Application Load Balancers
+- Target Groups
+- Listeners
+- Listener Rules
+- Security Groups
+- Resource Tags
+
+Use a dedicated IAM role for the controller rather than granting broad application permissions to the worker-node role.
+
+Conceptually:
+
+```text
+AWS Load Balancer Controller
+          |
+          v
+Service Account / Pod Identity
+          |
+          v
+IAM Role
+          |
+          v
+AWS Load Balancing APIs
+```
+
+### Step 10 - Add the Helm Provider
+
+Terraform will use the Helm provider to install the AWS Load Balancer Controller into the EKS cluster.
+
+Provider responsibility:
+
+```text
+Terraform
+|
++-- AWS Provider
+|     +-- ECR
+|     +-- IAM
+|     +-- Subnet Tags
+|
++-- Kubernetes Provider
+|     +-- Deployment
+|     +-- Service
+|     +-- Ingress
+|
++-- Helm Provider
+      +-- AWS Load Balancer Controller
+```
+
+### Step 11 - Install AWS Load Balancer Controller
+
+Install the controller into the `kube-system` namespace.
+
+Validate:
+
+```bash
+kubectl get deployment \
+  -n kube-system \
+  aws-load-balancer-controller
+```
+
+Also check:
+
+```bash
+kubectl get pods -n kube-system
+```
+
+### Step 12 - Tag the Public Subnets
+
+The internet-facing ALB needs public subnets in multiple Availability Zones.
+
+The current project already has:
+
+```text
+10.10.1.0/24 - us-east-1a
+10.10.3.0/24 - us-east-1b
+```
+
+The public subnets should be discoverable for external load balancers.
+
+Typical Kubernetes subnet role tag:
+
+```text
+kubernetes.io/role/elb = 1
+```
+
+Private subnets can use:
+
+```text
+kubernetes.io/role/internal-elb = 1
+```
+
+### Step 13 - Create Kubernetes Ingress
+
+Create an Ingress resource that routes HTTP traffic to the ClusterIP Service.
+
+Initial routing can remain simple:
+
+```text
+/
+ |
+ v
+nginx-service
+```
+
+Architecture:
+
+```text
+Ingress
+   |
+   v
+nginx-service
+   |
++--+--+
+|  |  |
+Pod Pod Pod
+```
+
+### Step 14 - Let the Controller Create the ALB
+
+The AWS Load Balancer Controller watches the Ingress resource.
+
+```text
+Kubernetes Ingress
+       |
+       v
+AWS Load Balancer Controller
+       |
+       v
+AWS API
+       |
+       v
+Application Load Balancer
+```
+
+The controller creates the required AWS load-balancing resources.
+
+### Step 15 - Validate the Ingress
+
+Run:
+
+```bash
+kubectl get ingress -n production
+```
+
+Then:
+
+```bash
+kubectl describe ingress -n production
+```
+
+Expected result:
+
+```text
+ADDRESS
+k8s-production-xxxx.us-east-1.elb.amazonaws.com
+```
+
+### Step 16 - Validate ALB Target Health
+
+Check the target group in AWS and verify the application targets become healthy.
+
+Also validate from Kubernetes:
+
+```bash
+kubectl get pods -n production
+kubectl get svc -n production
+kubectl get ingress -n production
+```
+
+If targets are unhealthy, check:
+
+- application port
+- Service port
+- target port
+- readiness probe
+- Ingress annotations
+- subnet tags
+- security groups
+- ALB health-check path
+
+### Step 17 - Test External Access
+
+Test using the ALB DNS name.
+
+```bash
+curl http://<ALB-DNS-NAME>
+```
+
+Or open:
+
+```text
+http://<ALB-DNS-NAME>
+```
+
+in a browser.
+
+## Day 3 End-to-End Flow
+
+```text
+Developer
+   |
+   v
+Application Source
+   |
+   v
+Docker Build
+   |
+   v
+Docker Image
+   |
+   v
+Amazon ECR
+   |
+   v
+EKS Deployment
+   |
+   v
+Application Pods
+   |
+   v
+ClusterIP Service
+   |
+   v
+Ingress
+   |
+   v
+AWS Load Balancer Controller
+   |
+   v
+Application Load Balancer
+   |
+   v
+Internet User
+```
+
+## Day 3 Validation Checklist
+
+Day 3 should be considered complete when:
+
+```text
+ECR repository exists
++
+Application image is pushed to ECR
++
+EKS Deployment uses the ECR image
++
+Pods are Running and Ready
++
+ClusterIP Service has healthy endpoints
++
+AWS Load Balancer Controller is Running
++
+Public subnets are tagged correctly
++
+Ingress is created
++
+ALB is provisioned
++
+ALB targets are healthy
++
+Application is reachable using ALB DNS
+```
+
+## Deferred to Later Phases
+
+The following are intentionally not part of the first Day 3 implementation:
+
+- Route 53 custom domain
+- ACM HTTPS certificate
+- AWS WAF
+- HPA
+- Karpenter
+- EBS CSI / PV / PVC
+- Prometheus and Grafana
+- Jenkins deployment pipeline
+
+These can be introduced after the basic ECR-to-EKS-to-ALB flow is working correctly.
