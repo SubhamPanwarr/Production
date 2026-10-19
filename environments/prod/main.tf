@@ -294,9 +294,7 @@ resource "aws_route_table_association" "vpc_a_private_2" {
 # =======================================================
 # RDS MySQL
 # =======================================================
-
 module "rds" {
-
   source = "../../modules/rds"
 
   identifier = "prod-mysql"
@@ -317,11 +315,56 @@ module "rds" {
   instance_class    = "db.t3.micro"
   allocated_storage = 20
 
+  max_allocated_storage = 100
+
   multi_az = false
+
+  # ---------------------------------------------------
+  # Backup
+  # ---------------------------------------------------
+
+  backup_retention_period = 1
+
+  backup_window      = "03:00-04:00"
+  maintenance_window = "Sun:04:00-Sun:05:00"
+
+  delete_automated_backups = true
+
+  # Lab settings
+  deletion_protection = false
+  skip_final_snapshot = true
+
+  # ---------------------------------------------------
+  # Parameter Group
+  # ---------------------------------------------------
+
+  create_parameter_group = true
+
+  parameter_group_family = "mysql8.0"
+
+  slow_query_log_enabled = true
+  long_query_time        = 2
+
+  # ---------------------------------------------------
+  # Performance Insights
+  # ---------------------------------------------------
+
+  performance_insights_enabled = var.enable_performance_insights
+
+  performance_insights_retention_period = 7
+
+  # ---------------------------------------------------
+  # Same Region Read Replica
+  # ---------------------------------------------------
+
+  create_read_replica = var.create_rds_read_replica
+
+  read_replica_identifier = "prod-mysql-read-1"
+
+  read_replica_instance_class = "db.t3.micro"
 
   tags = local.common_tags
 }
-
 
 # =======================================================
 # Amazon EKS - Day 1
