@@ -57,3 +57,39 @@ variable "eks_cluster_name" {
   type        = string
   default     = "production-eks-cluster"
 }
+
+variable "dr_region" {
+  description = "Disaster recovery AWS Region"
+  type        = string
+  default     = "us-west-2"
+}
+
+variable "create_rds_read_replica" {
+  description = "Create same-region RDS read replica"
+  type        = bool
+  default     = false
+}
+
+variable "create_cross_region_replica" {
+  description = "Create cross-region RDS read replica"
+  type        = bool
+  default     = false
+}
+
+variable "enable_cross_region_backups" {
+  description = "Enable cross-region automated backup replication"
+  type        = bool
+  default     = false
+}
+
+variable "create_cross_region_snapshot" {
+  description = "Create a manual snapshot and copy it to DR region"
+  type        = bool
+  default     = false
+}
+
+variable "enable_performance_insights" {
+  description = "Enable RDS Performance Insights"
+  type        = bool
+  default     = false
+}

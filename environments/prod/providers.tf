@@ -14,6 +14,10 @@ terraform {
   }
 }
 
+# =======================================================
+# Primary AWS Provider
+# =======================================================
+
 provider "aws" {
   region = var.aws_region
 
@@ -23,6 +27,26 @@ provider "aws" {
       Project     = "Production"
       ManagedBy   = "Terraform"
       Owner       = "DevOps"
+      RegionRole  = "Primary"
+    }
+  }
+}
+
+# =======================================================
+# DR AWS Provider
+# =======================================================
+
+provider "aws" {
+  alias  = "dr"
+  region = var.dr_region
+
+  default_tags {
+    tags = {
+      Environment = var.environment
+      Project     = "Production"
+      ManagedBy   = "Terraform"
+      Owner       = "DevOps"
+      RegionRole  = "DR"
     }
   }
 }

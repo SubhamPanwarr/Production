@@ -59,3 +59,35 @@ output "kubernetes_namespace" {
 output "nginx_service_name" {
   value = kubernetes_service_v1.nginx.metadata[0].name
 }
+
+# =======================================================
+# RDS Outputs
+# =======================================================
+
+output "rds_primary_endpoint" {
+  description = "Primary RDS endpoint"
+  value       = module.rds.endpoint
+}
+
+output "rds_primary_arn" {
+  description = "Primary RDS ARN"
+  value       = module.rds.db_instance_arn
+}
+
+output "rds_parameter_group" {
+  value = module.rds.parameter_group_name
+}
+
+output "rds_read_replica_endpoint" {
+  description = "Same-region read replica endpoint"
+  value       = module.rds.read_replica_endpoint
+}
+
+output "rds_cross_region_replica_endpoint" {
+  description = "Cross-region DR replica endpoint"
+  value       = module.rds_dr.cross_region_replica_endpoint
+}
+
+output "rds_dr_kms_key_arn" {
+  value = module.rds_dr.dr_kms_key_arn
+}
