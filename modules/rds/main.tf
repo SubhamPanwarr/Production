@@ -29,7 +29,7 @@ resource "aws_security_group" "rds" {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [var.allowed_security_group_id]
+    security_groups = var.allowed_security_group_ids
   }
 
   egress {
@@ -82,7 +82,7 @@ resource "aws_db_parameter_group" "this" {
 resource "aws_db_instance" "this" {
   identifier = var.identifier
 
-  engine         = var.engine
+  engine         = "mysql"
   engine_version = var.engine_version
 
   instance_class = var.instance_class
@@ -93,7 +93,8 @@ resource "aws_db_instance" "this" {
 
   db_name  = var.db_name
   username = var.db_username
-  password = var.db_password
+
+  manage_master_user_password = true
 
   port = 3306
 
