@@ -38,6 +38,15 @@ resource "kubernetes_deployment_v1" "nginx" {
   spec {
     replicas = 3
 
+    strategy {
+      type = "RollingUpdate"
+
+      rolling_update {
+        max_surge       = "1"
+        max_unavailable = "1"
+      }
+    }
+
     selector {
       match_labels = {
         app = "nginx"
@@ -54,10 +63,56 @@ resource "kubernetes_deployment_v1" "nginx" {
       spec {
 
         # ------------------------------------------------
-        # Service Account
+        # Scheduling Rules
         # ------------------------------------------------
-        # This service account is linked to the IAM role
-        # that allows access to AWS Secrets Manager.
+
+        affinity {
+
+          # ----------------------------------------------
+          # Node Affinity
+          # Prefer worker nodes labeled workload=frontend
+          # ----------------------------------------------
+
+          node_affinity {
+            preferred_during_scheduling_ignored_during_execution {
+              weight = 100
+
+              preference {
+                match_expressions {
+                  key      = "workload"
+                  operator = "In"
+                  values   = ["frontend"]
+                }
+              }
+            }
+          }
+
+          # ----------------------------------------------
+          # Pod Anti-Affinity
+          # Prefer spreading nginx Pods across nodes
+          # ----------------------------------------------
+
+          pod_anti_affinity {
+            preferred_during_scheduling_ignored_during_execution {
+              weight = 100
+
+              pod_affinity_term {
+                topology_key = "kubernetes.io/hostname"
+
+                label_selector {
+                  match_expressions {
+                    key      = "app"
+                    operator = "In"
+                    values   = ["nginx"]
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        # ------------------------------------------------
+        # Service Account
         # ------------------------------------------------
 
         service_account_name = kubernetes_service_account_v1.production_app.metadata[0].name
@@ -68,14 +123,14 @@ resource "kubernetes_deployment_v1" "nginx" {
 
         container {
           name  = "nginx"
-          image = "523881172609.dkr.ecr.us-east-1.amazonaws.com/production-app:v1"
+          image = "523881172609.dkr.ecr.us-east-1.amazonaws.com/production-app:v2"
 
           port {
             container_port = 80
           }
 
           # ----------------------------------------------
-          # Mount AWS Secrets Manager secret
+          # Secrets Manager Mount
           # ----------------------------------------------
 
           volume_mount {
@@ -85,7 +140,7 @@ resource "kubernetes_deployment_v1" "nginx" {
           }
 
           # ----------------------------------------------
-          # Resource Requests / Limits
+          # Resources
           # ----------------------------------------------
 
           resources {
@@ -131,9 +186,6 @@ resource "kubernetes_deployment_v1" "nginx" {
 
         # ------------------------------------------------
         # Secrets Store CSI Volume
-        # ------------------------------------------------
-        # This volume uses the SecretProviderClass:
-        # production-db-secret
         # ------------------------------------------------
 
         volume {
