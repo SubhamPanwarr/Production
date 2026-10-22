@@ -1,109 +1,101 @@
-# Production AWS Infrastructure with Terraform & EKS
+# Production AWS Infrastructure with Terraform, EKS, ALB, ECR & Secrets Manager
 
 ## Project Overview
 
-This repository implements a production-style AWS platform using **Terraform** and reusable modules.
+This repository implements a production-style AWS platform using **Terraform**, reusable modules, Amazon EKS, Amazon RDS, Amazon ECR, AWS Load Balancer Controller, AWS Secrets Manager, and multi-VPC networking.
 
-The current design includes:
+The project is designed as a practical DevOps lab that demonstrates how production infrastructure is provisioned, secured, connected, validated, and troubleshot.
+
+## What This Project Includes
 
 - Multi-VPC networking
-- Transit Gateway connectivity
+- Public and private subnets across multiple Availability Zones
+- Internet Gateway and NAT Gateway
 - Bastion-based administrative access
 - Private EC2 instances
-- Amazon S3 with Gateway VPC Endpoints
+- AWS Transit Gateway connectivity between VPCs
+- S3 Gateway VPC Endpoints
 - IAM roles for EC2-to-S3 access
 - Amazon RDS MySQL in private subnets
+- AWS-managed RDS master password in Secrets Manager
 - Custom RDS parameter group
-- Configurable RDS backup policy
-- RDS Performance Insights support
-- Same-Region RDS Read Replica support
-- Dedicated DR Region networking
-- Cross-Region RDS Read Replica support
-- Cross-Region automated backup replication support
-- Cross-Region manual snapshot copy support
-- Amazon EKS with managed worker nodes
-- Kubernetes namespace, deployment, pods, probes, resource limits, and ClusterIP service
-- Remote Terraform state stored in Amazon S3
+- RDS backup and DR configuration
+- Cross-Region DR networking and KMS
+- Amazon EKS managed cluster
+- EKS managed worker node group in private subnets
+- Kubernetes namespace, Deployment, Pods, probes, resources, and ClusterIP Service
+- AWS Load Balancer Controller
+- Internet-facing Application Load Balancer through Kubernetes Ingress
+- Amazon ECR repository and custom container image workflow
+- Secrets Store CSI Driver
+- AWS Secrets Manager CSI provider
+- IRSA-based pod access to Secrets Manager
+- SecretProviderClass-based RDS secret mounting
+- Remote Terraform state in Amazon S3
 
 ---
 
 # High-Level Architecture
 
-```text id="4vbgz7"
-                                  INTERNET
-                                      |
+```text
+                                    INTERNET
+                                        |
+                                        v
                                Internet Gateway
+                                        |
+                        +---------------+---------------+
+                        |                               |
+                        v                               v
+                Public Subnet AZ-A              Public Subnet AZ-B
+                  10.10.1.0/24                    10.10.3.0/24
+                        |                               |
+                        +-------------+-----------------+
                                       |
-                         +-------------------------+
-                         |   PRIMARY REGION        |
-                         |      us-east-1          |
-                         +-------------------------+
+                             Internet-facing ALB
                                       |
-                              VPC-A 10.10.0.0/16
+                                      v
+                          Kubernetes ALB Ingress
                                       |
-                 +--------------------+--------------------+
-                 |                                         |
-           Public Subnets                            Private Subnets
-          us-east-1a / 1b                           us-east-1a / 1b
-                 |                                         |
-            Bastion Host                    +--------------+--------------+
-                                            |                             |
-                                          EC2-A                          EKS
-                                            |                       Managed Nodes
-                                            |                             |
-                                            |                           Pods
-                                            |                             |
-                                            |                       ClusterIP Service
-                                            |
-                                            | TCP 3306
-                                            v
-                                  +-------------------+
-                                  |  RDS MySQL        |
-                                  |  Primary DB       |
-                                  +-------------------+
-                                      |        |
-                           async read |        | automated backups
-                         replication  |        |
-                                      v        v
-                               Same-Region   PITR / Snapshots
-                               Read Replica
+                                      v
+                           nginx-service ClusterIP
+                                      |
+                       +--------------+--------------+
+                       |              |              |
+                       v              v              v
+                     Pod-1          Pod-2          Pod-3
+                       |
+                       | CSI mounted secret
+                       v
+                AWS Secrets Manager
+                       |
+                       v
+                    RDS MySQL
 
 
- VPC-A
-   |
+Private EKS worker nodes
+        |
+        | outbound internet access
+        v
+Private Route Table
+        |
+        v
+NAT Gateway
+        |
+        v
+Internet Gateway
+
+
+VPC-A 10.10.0.0/16
+        |
+        v
 Transit Gateway
-   |
- VPC-B 10.20.0.0/16
-   |
- Private EC2-B
-   |
- S3 VPC Endpoint
-   |
- Amazon S3
+        |
+        v
+VPC-B 10.20.0.0/16
 
 
-                   CROSS-REGION DISASTER RECOVERY
-                   ==============================
-
-                         DR REGION: us-west-2
-                                |
-                       DR VPC 10.30.0.0/16
-                                |
-                    +-----------+-----------+
-                    |                       |
-              Private Subnet A        Private Subnet B
-              10.30.1.0/24           10.30.2.0/24
-                    |                       |
-                    +-----------+-----------+
-                                |
-                     RDS DR Subnet Group
-                                |
-              +-----------------+------------------+
-              |                                    |
-      Cross-Region Read Replica            Cross-Region Backups
-              |
-        Can be promoted
-        during a DR event
+Primary Region: us-east-1
+DR Region:      us-west-2
 ```
 
 ---
@@ -112,574 +104,293 @@ Transit Gateway
 
 ## VPC-A — Primary Application VPC
 
-```text id="34da2c"
-CIDR: 10.10.0.0/16
-Region: us-east-1
+```text
+CIDR   : 10.10.0.0/16
+Region : us-east-1
 ```
 
 ### Public Subnets
 
-```text id="c9jssy"
+```text
 10.10.1.0/24 - us-east-1a
 10.10.3.0/24 - us-east-1b
 ```
 
-The public subnets are used for public-facing or administrative infrastructure such as the Bastion Host.
+These subnets are used for public-facing infrastructure such as:
+
+- Bastion Host
+- NAT Gateway
+- Internet-facing Application Load Balancer
+
+Both public subnets are tagged for AWS Load Balancer Controller discovery:
+
+```text
+kubernetes.io/role/elb = 1
+```
 
 ### Private Subnets
 
-```text id="zyjm86"
+```text
 10.10.2.0/24 - us-east-1a
 10.10.4.0/24 - us-east-1b
 ```
 
-The private subnets are used by:
+These subnets are used by:
 
 - Private EC2 instances
-- Amazon EKS worker nodes
-- RDS DB subnet group
+- EKS managed worker nodes
+- RDS subnet group
 
----
+Private subnets use:
 
-## VPC-B — Secondary Private VPC
-
-```text id="u01qbf"
-CIDR: 10.20.0.0/16
-Region: us-east-1
+```text
+kubernetes.io/role/internal-elb = 1
 ```
 
-VPC-B contains private infrastructure and communicates with VPC-A through AWS Transit Gateway.
+---
+
+# NAT Gateway
+
+The EKS worker nodes run in private subnets and do not have public IP addresses.
+
+They still require outbound access for tasks such as:
+
+- EKS node bootstrap
+- Pulling container images
+- Accessing AWS public APIs
+- Downloading dependencies
+- Reaching external services
+
+The private route table therefore contains:
+
+```text
+0.0.0.0/0 -> NAT Gateway
+```
+
+The NAT Gateway is placed in a public subnet and reaches the internet through the Internet Gateway.
+
+```text
+Private EKS Node
+      |
+      v
+Private Route Table
+      |
+      v
+NAT Gateway
+      |
+      v
+Internet Gateway
+      |
+      v
+Internet / AWS Public Endpoint
+```
+
+## Practical Issue Solved
+
+During the build, EC2 worker instances launched successfully but the EKS managed node group failed with:
+
+```text
+NodeCreationFailure
+Instances failed to join the kubernetes cluster
+```
+
+IAM and EC2 health were correct. The missing component was outbound connectivity from the private subnets.
+
+After adding:
+
+- Elastic IP
+- NAT Gateway
+- Private default route to NAT
+
+the recreated worker nodes successfully joined the EKS cluster.
 
 ---
 
-# Transit Gateway
+# VPC-B — Secondary Private VPC
 
-AWS Transit Gateway provides centralized connectivity between VPC-A and VPC-B.
+```text
+CIDR   : 10.20.0.0/16
+Region : us-east-1
+```
 
-```text id="qo7xro"
+VPC-B hosts private infrastructure and communicates with VPC-A through AWS Transit Gateway.
+
+---
+
+# AWS Transit Gateway
+
+Transit Gateway provides centralized VPC-to-VPC connectivity.
+
+```text
 VPC-A
-   |
-   v
+  |
+  v
 Transit Gateway
-   |
-   v
+  |
+  v
 VPC-B
 ```
 
-Routes are configured in both VPCs so private resources can communicate through the Transit Gateway.
-
-This design is easier to scale than creating individual VPC peering relationships as the number of VPCs increases.
+This design scales better than creating many individual VPC peering relationships.
 
 ---
 
 # Bastion Host
 
-The Bastion Host is deployed in the public subnet of VPC-A.
+The Bastion Host runs in a public subnet and provides administrative access to private resources.
 
-It provides administrative SSH access to EC2 instances running in private subnets.
-
-```text id="9bi9jg"
-Administrator Laptop
-        |
-        | SSH 22
-        v
-    Bastion Host
-        |
-        | SSH 22
-        v
-    Private EC2
+```text
+Administrator
+     |
+     | SSH
+     v
+Bastion Host
+     |
+     | SSH
+     v
+Private EC2
 ```
 
-Private EC2 instances do not require direct SSH access from the internet.
+Private EC2 instances do not require direct internet-facing SSH access.
 
 ---
 
-# Amazon EC2
-
-Private EC2 instances are deployed in VPC-A and VPC-B.
-
-Example architecture:
-
-```text id="tc5p8e"
-EC2-A
-VPC-A
-Private Subnet
-
-EC2-B
-VPC-B
-Private Subnet
-```
-
-The EC2 instances can communicate between VPCs using Transit Gateway routing.
-
----
-
-# Amazon S3
+# Amazon S3 and VPC Endpoints
 
 Amazon S3 is used for application and infrastructure-related object storage.
 
-Private infrastructure accesses S3 through S3 Gateway VPC Endpoints.
+Private workloads can reach S3 through Gateway VPC Endpoints.
 
-```text id="djpvoj"
-Private EC2
-    |
-    v
+```text
+Private Resource
+      |
+      v
 S3 Gateway VPC Endpoint
-    |
-    v
+      |
+      v
 Amazon S3
 ```
 
-Benefits include:
+Benefits:
 
-- Private S3 communication
-- Reduced dependency on NAT Gateway
-- No public internet route required for S3 traffic
-- Better network security
-- Potential NAT Gateway cost savings
-
----
-
-# IAM for EC2 and S3
-
-EC2 instances use IAM roles instead of storing AWS access keys directly on the servers.
-
-```text id="2exm51"
-EC2
- |
- v
-IAM Role
- |
- v
-Amazon S3
-```
-
-This allows temporary AWS credentials to be used through the EC2 instance profile.
+- Private S3 connectivity
+- Reduced NAT dependency
+- Improved security
+- Potential NAT Gateway cost reduction
 
 ---
 
 # Amazon RDS MySQL
 
-Amazon RDS provides the managed relational database layer.
+The primary RDS database runs in private subnets inside VPC-A.
 
-The primary database is deployed in private subnets inside VPC-A.
+Current configuration includes:
 
-Current Terraform configuration:
-
-```text id="hsu06k"
-Engine                  : MySQL
-Port                    : 3306
-Storage                 : GP3
-Initial Storage         : 20 GB
-Maximum Storage         : 100 GB
-Public Access           : Disabled
-Storage Encryption      : Enabled
-Backup Retention        : 1 day
-Multi-AZ                : Disabled for lab
+```text
+Engine             : MySQL
+Engine Version     : 8.0.46
+Port               : 3306
+Storage            : GP3
+Initial Storage    : 20 GB
+Maximum Storage    : 100 GB
+Public Access      : Disabled
+Storage Encryption : Enabled
+Multi-AZ           : Disabled for lab
 ```
 
-Application-to-database connectivity:
+The RDS parameter group uses:
 
-```text id="hyj4q2"
-EC2-A Security Group
-        |
-        | TCP 3306
-        v
-RDS Security Group
-        |
-        v
-RDS MySQL
-```
-
-The RDS database is not directly accessible from the internet.
-
----
-
-# RDS DB Subnet Group
-
-The RDS subnet group contains private subnets from two Availability Zones.
-
-```text id="wb6jy0"
-Private Subnet
-10.10.2.0/24
-us-east-1a
-
-Private Subnet
-10.10.4.0/24
-us-east-1b
-```
-
-Architecture:
-
-```text id="neicjd"
-RDS DB Subnet Group
-        |
-        +---- us-east-1a
-        |
-        +---- us-east-1b
-```
-
-This provides the network foundation required for RDS high-availability capabilities.
-
----
-
-# RDS Endpoint
-
-Applications connect to RDS using the RDS DNS endpoint.
-
-Example:
-
-```text id="d718om"
-prod-mysql.xxxxxxxxx.us-east-1.rds.amazonaws.com
-```
-
-MySQL port:
-
-```text id="jx8h0e"
-3306
-```
-
-Applications should use the endpoint instead of relying on the underlying RDS private IP address.
-
----
-
-# RDS Custom Parameter Group
-
-The RDS module creates a custom MySQL parameter group.
-
-Configured parameters include:
-
-```text id="o7oqw2"
-slow_query_log = 1
-long_query_time = 2
-```
-
-This helps identify long-running SQL queries for troubleshooting and performance analysis.
-
-The current Terraform configuration uses:
-
-```text id="sk3eyq"
+```text
 mysql8.0
 ```
 
-as the parameter group family.
+This matches the MySQL 8.0 engine family.
 
-The parameter group family should always match the major MySQL engine version used by the RDS instance.
+## RDS Credentials
 
----
+Terraform uses:
 
-# RDS Backup Policy
-
-The RDS module supports configurable backup settings including:
-
-- Backup retention period
-- Preferred backup window
-- Maintenance window
-- Snapshot tagging
-- Automated backup deletion behavior
-- Final snapshot behavior
-- Deletion protection
-
-Current lab configuration:
-
-```text id="v10r8e"
-Backup Retention : 1 day
-Backup Window    : 03:00-04:00
-Maintenance      : Sun:04:00-Sun:05:00
+```hcl
+manage_master_user_password = true
 ```
 
-For production environments, backup retention should be selected according to:
-
-- Recovery Point Objective
-- Compliance requirements
-- Data-retention requirements
-- Business requirements
+This means AWS generates and stores the RDS master credentials in AWS Secrets Manager instead of hardcoding the password in Terraform.
 
 ---
 
-# Point-in-Time Recovery
+# RDS Secrets Manager Integration
 
-Automated backups provide the foundation for Point-in-Time Recovery.
+The RDS-managed secret is consumed by Kubernetes through:
 
-Example:
+```text
+RDS
+ |
+ v
+AWS Secrets Manager
+ |
+ v
+IAM Role
+ |
+ v
+IRSA
+ |
+ v
+production-app ServiceAccount
+ |
+ v
+Secrets Store CSI Driver
+ |
+ v
+SecretProviderClass
+ |
+ v
+/mnt/secrets-store inside Pod
+```
 
-```text id="eg6u3i"
-Database healthy
+The Kubernetes ServiceAccount is associated with an IAM role using IRSA:
+
+```text
+production-app
       |
-      |
-10:00
-      |
-10:20
-      |
-10:29   <-- Restore here
-      |
-10:30   Data accidentally deleted
+      v
+production-eks-cluster-app-secrets-role
 ```
 
-A new RDS instance can be restored to a point before the unwanted database change.
+The secret is mounted read-only into the application Pod.
+
+The database password is therefore not hardcoded in:
+
+- Git
+- Terraform variables
+- Docker image
+- Kubernetes Deployment
+- application source code
 
 ---
 
-# Same-Region Read Replica
+# Secrets Store CSI Driver
 
-The RDS module supports a configurable same-Region Read Replica.
+The EKS cluster uses the AWS Secrets Store CSI add-on.
 
-```text id="n3o1t1"
-                 Application
-                    |
-          +---------+---------+
-          |                   |
-        WRITE               READ
-          |                   |
-          v                   v
-     Primary RDS ------> Read Replica
+The add-on installs:
+
+- Secrets Store CSI Driver
+- AWS Secrets Manager provider
+- SecretProviderClass CRD
+
+The project defines:
+
+```text
+SecretProviderClass: production-db-secret
+Namespace: production
+Provider: aws
 ```
 
-The primary database processes:
+The secret is mounted into the Pod at:
 
-```text id="bc8jsb"
-INSERT
-UPDATE
-DELETE
+```text
+/mnt/secrets-store
 ```
-
-The Read Replica can be used for:
-
-```text id="2jhvgg"
-SELECT
-Reports
-Dashboards
-Read-heavy API requests
-```
-
-This helps reduce read load on the primary database.
-
-The Terraform module allows this capability to be enabled as required:
-
-```hcl id="vz8bwg"
-create_rds_read_replica = true
-```
-
-The default value is:
-
-```hcl id="vyvdm0"
-false
-```
-
-This gives the environment control over when an additional Read Replica should be created.
-
----
-
-# RDS Performance Insights
-
-The Terraform module includes support for RDS Performance Insights.
-
-It can be enabled as required:
-
-```hcl id="tdvdke"
-enable_performance_insights = true
-```
-
-Performance Insights helps investigate:
-
-- DB load
-- Expensive SQL queries
-- Wait events
-- Database users
-- Database performance bottlenecks
-
-Conceptually:
-
-```text id="hcsqbx"
-Application Slow
-       |
-       v
-Performance Insights
-       |
-       +---- DB Load
-       |
-       +---- Top SQL
-       |
-       +---- Wait Events
-       |
-       +---- Database Users
-```
-
----
-
-# Disaster Recovery Region
-
-The architecture contains a second AWS provider for disaster recovery.
-
-```text id="1i4ay2"
-Primary Region
-us-east-1
-
-DR Region
-us-west-2
-```
-
-Terraform provider design:
-
-```text id="msx9w3"
-aws
-    |
-    +---- us-east-1
-
-aws.dr
-    |
-    +---- us-west-2
-```
-
-Resources that belong to the DR Region use the aliased `aws.dr` provider.
-
----
-
-# DR VPC
-
-Terraform creates a separate VPC in the DR Region.
-
-```text id="rnqs87"
-CIDR: 10.30.0.0/16
-Region: us-west-2
-```
-
-Private subnets:
-
-```text id="b6epcj"
-10.30.1.0/24
-us-west-2a
-
-10.30.2.0/24
-us-west-2b
-```
-
-Architecture:
-
-```text id="8o01to"
-DR VPC
-10.30.0.0/16
-      |
-      +---- Private Subnet A
-      |
-      +---- Private Subnet B
-```
-
-These subnets form the DR RDS DB subnet group.
-
----
-
-# DR KMS Encryption
-
-The DR module creates a dedicated AWS KMS key.
-
-```text id="w1fq51"
-RDS DR Resources
-       |
-       v
-DR KMS Key
-```
-
-The KMS key can be used for encrypted cross-Region database resources and backup copies.
-
----
-
-# Cross-Region Read Replica
-
-The RDS DR module supports a configurable cross-Region Read Replica.
-
-Architecture:
-
-```text id="ykb9j8"
-Primary Region
-us-east-1
-
-Primary RDS
-     |
-     | Asynchronous replication
-     |
-     v
-
-DR Region
-us-west-2
-
-Cross-Region Read Replica
-```
-
-If a regional disaster occurs, the replica can be promoted to a standalone database.
-
-```text id="f31imv"
-Cross-Region Replica
-         |
-         | Promote
-         v
-New Standalone Primary
-```
-
-The capability can be enabled through:
-
-```hcl id="90bq9z"
-create_cross_region_replica = true
-```
-
-The default value is:
-
-```hcl id="xq7btm"
-false
-```
-
-This allows the same Terraform codebase to support both lower-cost lab deployments and more complete DR configurations.
-
----
-
-# Cross-Region Automated Backups
-
-The DR module supports configurable automated backup replication to the DR Region.
-
-```text id="w9mhjj"
-Primary RDS
-    |
-    | Snapshots
-    | Transaction Logs
-    v
-DR Region
-    |
-Automated Backup Copies
-```
-
-This provides another disaster-recovery method in addition to the cross-Region Read Replica.
-
-It can be enabled through:
-
-```hcl id="fp3was"
-enable_cross_region_backups = true
-```
-
----
-
-# Cross-Region Snapshot Copy
-
-The DR module includes support for manual cross-Region snapshot copy.
-
-Architecture:
-
-```text id="gs4jl9"
-Primary RDS
-    |
-    v
-Manual Snapshot
-    |
-    | Cross-Region Copy
-    v
-DR Region Snapshot
-```
-
-This capability can be used for:
-
-- DR testing
-- Pre-deployment recovery points
-- Database migration
-- Manual backup exercises
 
 ---
 
@@ -687,29 +398,27 @@ This capability can be used for:
 
 Amazon EKS provides the Kubernetes orchestration layer.
 
-AWS manages the Kubernetes control plane while worker nodes run inside private VPC-A subnets.
+AWS manages the Kubernetes control plane while worker nodes run in private subnets.
 
-```text id="v28ht2"
-                 AWS Managed EKS Control Plane
-                            |
-                +-----------+-----------+
-                |                       |
-        Private Subnet AZ-A      Private Subnet AZ-B
-           10.10.2.0/24             10.10.4.0/24
-                |                       |
-          Worker Node-1            Worker Node-2
-                |                       |
-              Pods                    Pods
+```text
+             AWS Managed EKS Control Plane
+                         |
+             +-----------+-----------+
+             |                       |
+     Private Subnet AZ-A      Private Subnet AZ-B
+       10.10.2.0/24             10.10.4.0/24
+             |                       |
+        Worker Node-1            Worker Node-2
+             |                       |
+           Pods                    Pods
 ```
 
----
+## Managed Node Group
 
-# EKS Managed Node Group
+Current configuration:
 
-Current node group configuration:
-
-```text id="nlh57b"
-Instance Type : t3.medium
+```text
+Instance Type : t3.small
 Capacity Type : ON_DEMAND
 
 Minimum Nodes : 2
@@ -717,27 +426,44 @@ Desired Nodes : 2
 Maximum Nodes : 4
 ```
 
-The nodes are distributed across two private subnets.
+The two worker nodes are distributed across private subnets in separate Availability Zones.
 
 ---
 
 # Kubernetes Workload
 
-The Kubernetes layer includes:
+The Kubernetes workload contains:
 
 - Namespace
 - Deployment
 - ReplicaSet
-- Pods
+- 3 Pods
 - ClusterIP Service
 - Resource requests
 - Resource limits
 - Readiness probe
 - Liveness probe
+- ServiceAccount
+- CSI volume
+- Secrets Manager volume mount
+
+Current resource configuration:
+
+```text
+Replicas : 3
+
+Requests
+CPU      : 100m
+Memory   : 128Mi
+
+Limits
+CPU      : 250m
+Memory   : 256Mi
+```
 
 Application flow:
 
-```text id="fyyl9g"
+```text
 Deployment
     |
     v
@@ -750,114 +476,222 @@ ReplicaSet
     +---- Pod
            |
            v
-    ClusterIP Service
-```
-
-The application is currently exposed internally using a ClusterIP Service.
-
----
-
-# Readiness Probe
-
-The readiness probe checks whether a Pod is ready to receive traffic.
-
-```text id="39bq3l"
-Pod starts
-    |
-    v
-Readiness Probe
-    |
-    v
-Application Ready
-    |
-    v
-Service sends traffic
-```
-
-If the readiness check fails, Kubernetes does not send Service traffic to that Pod.
-
----
-
-# Liveness Probe
-
-The liveness probe checks whether the application is still functioning.
-
-```text id="krwmbn"
-Application becomes unhealthy
-          |
-          v
-     Liveness fails
-          |
-          v
-Container restarted
+    nginx-service
+      ClusterIP
 ```
 
 ---
 
-# Resource Requests and Limits
+# AWS Load Balancer Controller
 
-Application containers define CPU and memory requests and limits.
+The AWS Load Balancer Controller runs inside EKS and watches Kubernetes Ingress resources.
 
-Example:
+The project uses an ALB Ingress configured with:
 
-```text id="6o606u"
-Requests
-CPU    : 100m
-Memory : 128Mi
-
-Limits
-CPU    : 250m
-Memory : 256Mi
+```text
+Scheme      : internet-facing
+Target Type : ip
+Listener    : HTTP 80
+Health Path : /
+IngressClass: alb
 ```
 
-Requests help Kubernetes schedule Pods.
+Request flow:
 
-Limits prevent containers from consuming resources beyond their configured maximum.
+```text
+Internet
+   |
+   v
+AWS Application Load Balancer
+   |
+   v
+Kubernetes Ingress
+   |
+   v
+nginx-service
+   |
+   v
+Pod IP targets
+```
+
+Because the Ingress uses:
+
+```text
+alb.ingress.kubernetes.io/target-type = ip
+```
+
+the ALB registers Pod IP addresses directly in the target group.
+
+All three application targets were validated as healthy.
+
+---
+
+# ALB Subnet Discovery Troubleshooting
+
+During deployment the Ingress initially failed with:
+
+```text
+FailedBuildModel
+couldn't auto-discover subnets:
+subnets count less than minimal required count: 1 < 2
+```
+
+The cause was that only one public subnet had:
+
+```text
+kubernetes.io/role/elb = 1
+```
+
+The second public subnet was updated with the same tag.
+
+The Ingress was also configured explicitly with both public subnet IDs:
+
+```text
+alb.ingress.kubernetes.io/subnets
+```
+
+After reconciliation:
+
+```text
+SuccessfullyReconciled
+```
+
+the Application Load Balancer became active.
+
+---
+
+# Amazon ECR
+
+Amazon ECR stores the custom application container image.
+
+Repository:
+
+```text
+production-app
+```
+
+The custom image workflow is:
+
+```text
+Dockerfile
+    |
+    v
+docker build
+    |
+    v
+production-app:v1
+    |
+    v
+docker tag
+    |
+    v
+Amazon ECR
+    |
+    v
+EKS Deployment
+```
+
+Example build:
+
+```bash
+docker build -t production-app:v1 .
+```
+
+Authenticate to ECR:
+
+```bash
+aws ecr get-login-password \
+  --region us-east-1 | \
+docker login \
+  --username AWS \
+  --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
+```
+
+Push:
+
+```bash
+docker push <account-id>.dkr.ecr.us-east-1.amazonaws.com/production-app:v1
+```
+
+The image was successfully pushed and verified in ECR.
+
+---
+
+# Disaster Recovery Region
+
+A second AWS provider is configured for disaster recovery.
+
+```text
+Primary Region : us-east-1
+DR Region      : us-west-2
+```
+
+DR VPC:
+
+```text
+CIDR: 10.30.0.0/16
+```
+
+Private DR subnets:
+
+```text
+10.30.1.0/24 - us-west-2a
+10.30.2.0/24 - us-west-2b
+```
+
+The DR design includes:
+
+- DR VPC
+- RDS subnet group
+- KMS encryption
+- Cross-Region Read Replica support
+- Automated backup replication support
+- Manual snapshot copy support
 
 ---
 
 # Terraform Project Structure
 
-```text id="h7mi03"
+```text
 Production/
-│
-├── environments/
-│   └── prod/
-│       ├── backend.tf
-│       ├── main.tf
-│       ├── rds-dr.tf
-│       ├── kubernetes.tf
-│       ├── outputs.tf
-│       ├── providers.tf
-│       ├── variables.tf
-│       └── terraform.tfvars
-│
-├── modules/
-│   ├── vpc/
-│   ├── ec2/
-│   ├── bastion/
-│   ├── transit-gateway/
-│   ├── s3/
-│   ├── vpc-endpoint/
-│   ├── iam-ec2-s3/
-│   ├── rds/
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   │
-│   ├── rds-dr/
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   └── versions.tf
-│   │
-│   └── eks/
-│       ├── main.tf
-│       ├── variables.tf
-│       └── outputs.tf
-│
-├── .gitignore
-└── README.md
+|
+|-- app/
+|   |-- Dockerfile
+|   `-- index.html
+|
+|-- environments/
+|   `-- prod/
+|       |-- backend.tf
+|       |-- ecr.tf
+|       |-- ingress.tf
+|       |-- kubernetes.tf
+|       |-- load-balancer-controller.tf
+|       |-- main.tf
+|       |-- outputs.tf
+|       |-- providers.tf
+|       |-- rds-dr.tf
+|       |-- secret-provider-class.tf
+|       |-- secrets-csi.tf
+|       |-- secrets.tf
+|       `-- variables.tf
+|
+|-- modules/
+|   |-- aws-load-balancer-controller/
+|   |-- bastion/
+|   |-- ec2/
+|   |-- ecr/
+|   |-- eks/
+|   |-- eks-secrets-access/
+|   |-- iam-ec2-s3/
+|   |-- rds/
+|   |-- rds-dr/
+|   |-- s3/
+|   |-- transit-gateway/
+|   |-- vpc/
+|   `-- vpc-endpoint/
+|
+|-- .gitignore
+`-- README.md
 ```
 
 ---
@@ -868,72 +702,270 @@ Terraform state is stored remotely in Amazon S3.
 
 Benefits:
 
-- Centralized state storage
-- State persistence
+- Centralized state
+- Persistent state storage
 - Team collaboration
-- Protection from accidental loss of local state
+- Protection from accidental local state loss
 
-Generated and sensitive Terraform files should not be committed to GitHub.
+Generated and sensitive files should not be committed to Git.
 
 Examples:
 
-```text id="3fj6gv"
+```text
 .terraform/
 *.tfstate
 *.tfstate.*
-terraform.tfvars
 *.tfvars
-tfplan
-plan.txt
+tfplan*
+plan*.txt
+backend.hcl
 ```
 
 ---
 
-# EKS Validation
+# Deployment and Validation
 
-Configure `kubectl`:
+## Terraform
 
-```bash id="5hf0vv"
+```bash
+terraform init
+terraform validate
+terraform plan
+terraform apply
+```
+
+## Configure kubectl
+
+```bash
 aws eks update-kubeconfig \
   --region us-east-1 \
   --name production-eks-cluster
 ```
 
-Check the cluster:
+## Validate EKS nodes
 
-```bash id="up7uc0"
-kubectl cluster-info
-```
-
-Check nodes:
-
-```bash id="t31arh"
-kubectl get nodes
+```bash
 kubectl get nodes -o wide
 ```
 
-Check application Pods:
+Expected:
 
-```bash id="jumh3r"
-kubectl get pods -n production
+```text
+2 worker nodes
+STATUS = Ready
 ```
 
-Check deployment:
+## Validate application Pods
 
-```bash id="um0pe6"
-kubectl get deployment -n production
+```bash
+kubectl get pods -n production -o wide
 ```
 
-Check Service:
+Expected:
 
-```bash id="7jo9ma"
+```text
+3 Pods
+READY = 1/1
+STATUS = Running
+```
+
+## Validate Service
+
+```bash
 kubectl get svc -n production
 ```
 
-Check Service endpoints:
+## Validate Ingress
 
-```bash id="fe445y"
-kubectl get endpoints -n production
+```bash
+kubectl get ingress -n production
+```
+
+The Ingress should show an AWS ALB DNS name in the ADDRESS column.
+
+## Validate ALB
+
+```bash
+curl -I http://<ALB-DNS-NAME>
+```
+
+Expected:
+
+```text
+HTTP/1.1 200 OK
+```
+
+## Validate ALB target health
+
+```bash
+aws elbv2 describe-target-health \
+  --region us-east-1 \
+  --target-group-arn <TARGET-GROUP-ARN>
+```
+
+Expected:
+
+```text
+All Pod IP targets = healthy
+```
+
+## Validate SecretProviderClass
+
+```bash
+kubectl get secretproviderclass -n production
+kubectl describe secretproviderclass production-db-secret -n production
+```
+
+## Validate CSI mounted secret
+
+Do not print the actual secret value.
+
+```bash
+kubectl exec -n production <POD-NAME> -- ls -l /mnt/secrets-store
+```
+
+## Validate ServiceAccount
+
+```bash
+kubectl get pod -n production <POD-NAME> \
+  -o jsonpath='{.spec.serviceAccountName}{"\n"}'
+```
+
+Expected:
+
+```text
+production-app
+```
+
+---
+
+# Key Practical Troubleshooting Scenarios
+
+## 1. EKS Nodes Failed to Join
+
+Symptoms:
+
+```text
+NodeCreationFailure
+Instances failed to join the kubernetes cluster
+```
+
+Checks performed:
+
+- EC2 instance state
+- Auto Scaling health
+- IAM node role policies
+- EKS endpoint configuration
+- private subnet routing
+
+Root cause:
+
+```text
+NAT Gateway missing
+```
+
+Fix:
+
+```text
+Elastic IP
+   +
+NAT Gateway
+   +
+0.0.0.0/0 -> NAT route
+```
+
+Result:
+
+```text
+Both EKS nodes became Ready
+```
+
+## 2. ALB Could Not Discover Two Subnets
+
+Symptoms:
+
+```text
+FailedBuildModel
+subnets count less than minimal required count: 1 < 2
+```
+
+Root cause:
+
+```text
+Second public subnet missing kubernetes.io/role/elb = 1
+```
+
+Fix:
+
+- Added ELB tag to second public subnet
+- Explicitly configured both public subnet IDs on the Ingress
+
+Result:
+
+```text
+SuccessfullyReconciled
+ALB state = active
+```
+
+## 3. RDS Parameter Group Version Mismatch
+
+Symptoms:
+
+```text
+mysql8.0 parameter group could not be used with a MySQL 8.4 instance
+```
+
+Fix:
+
+```text
+Engine Version = 8.0.46
+Parameter Family = mysql8.0
+```
+
+---
+
+# Security Design
+
+The project follows several production-oriented security practices:
+
+- EKS worker nodes run in private subnets
+- RDS has no public access
+- RDS credentials are managed by AWS Secrets Manager
+- Pods access Secrets Manager through IRSA
+- Secrets are mounted read-only through CSI
+- EC2 uses IAM roles instead of static credentials
+- S3 traffic can use private VPC Endpoints
+- Bastion access is separated from application workloads
+- Terraform state is stored remotely
+- Sensitive/generated Terraform files are excluded from Git
+
+---
+
+# Technologies Used
+
+```text
+AWS
+Terraform
+Amazon EKS
+Kubernetes
+Amazon ECR
+AWS Load Balancer Controller
+Application Load Balancer
+AWS Secrets Manager
+Secrets Store CSI Driver
+IRSA
+Amazon RDS MySQL
+Amazon EC2
+Amazon S3
+AWS Transit Gateway
+VPC Endpoints
+NAT Gateway
+IAM
+KMS
+Docker
+Linux
+Git
+GitHub
 ```
 
 ---
@@ -943,23 +975,3 @@ kubectl get endpoints -n production
 **Shubham Panwar**
 
 AWS / DevOps Engineer
-
-Technologies used in this project:
-
-```text id="2oo3rh"
-AWS
-Terraform
-Amazon EKS
-Kubernetes
-EC2
-VPC
-RDS
-S3
-Transit Gateway
-IAM
-KMS
-Linux
-Git
-GitHub
-Networking
-```
