@@ -13,9 +13,9 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "allowed_security_group_id" {
-  description = "Application EC2 security group allowed to access RDS"
-  type        = string
+variable "allowed_security_group_ids" {
+  description = "Security groups allowed to connect to RDS"
+  type        = list(string)
 }
 
 variable "db_name" {
@@ -30,12 +30,6 @@ variable "db_username" {
   sensitive   = true
 }
 
-variable "db_password" {
-  description = "Database administrator password"
-  type        = string
-  sensitive   = true
-}
-
 variable "engine" {
   description = "Database engine"
   type        = string
@@ -43,9 +37,9 @@ variable "engine" {
 }
 
 variable "engine_version" {
-  description = "MySQL engine version. Leave null to let AWS/provider select."
+  description = "MySQL engine version"
   type        = string
-  default     = null
+  default     = "8.0.46"
 }
 
 variable "instance_class" {
@@ -183,3 +177,5 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+

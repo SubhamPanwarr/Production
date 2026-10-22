@@ -50,3 +50,9 @@ output "read_replica_arn" {
     : null
   )
 }
+
+output "master_user_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the RDS master credentials"
+  value       = aws_db_instance.this.master_user_secret[0].secret_arn
+  sensitive   = true
+}

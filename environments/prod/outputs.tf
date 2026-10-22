@@ -91,3 +91,13 @@ output "rds_cross_region_replica_endpoint" {
 output "rds_dr_kms_key_arn" {
   value = module.rds_dr.dr_kms_key_arn
 }
+
+output "rds_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing RDS credentials"
+  value       = module.rds.master_user_secret_arn
+  sensitive   = true
+}
+
+output "ecr_repository_url" {
+  value = module.ecr.repository_url
+}

@@ -31,6 +31,14 @@ module "vpc_a" {
 
   create_igw = true
 
+  public_subnet_tags = {
+    "kubernetes.io/role/elb" = "1"
+  }
+
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb" = "1"
+  }
+
   tags = local.common_tags
 }
 
@@ -52,6 +60,34 @@ module "vpc_b" {
   create_igw = false
 
   tags = local.common_tags
+}
+
+#-----------------------------------------------
+resource "aws_eip" "nat_vpc_a" {
+  domain = "vpc"
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "prod-vpc-a-nat-eip"
+    }
+  )
+}
+
+resource "aws_nat_gateway" "vpc_a" {
+  allocation_id = aws_eip.nat_vpc_a.id
+  subnet_id     = module.vpc_a.public_subnet_id
+
+  depends_on = [
+    module.vpc_a
+  ]
+
+  tags = merge(
+    local.common_tags,
+    {
+      Name = "prod-vpc-a-nat"
+    }
+  )
 }
 
 # =======================================================
@@ -253,13 +289,14 @@ module "ec2_s3_iam" {
 resource "aws_subnet" "vpc_a_public_2" {
   vpc_id                  = module.vpc_a.vpc_id
   cidr_block              = "10.10.3.0/24"
-  availability_zone       = var.availability_zone_2
+  availability_zone       = "us-east-1b"
   map_public_ip_on_launch = true
 
   tags = merge(
     local.common_tags,
     {
-      Name = "prod-vpc-a-public-subnet-2"
+      Name                     = "prod-vpc-a-public-subnet-2"
+      "kubernetes.io/role/elb" = "1"
     }
   )
 }
@@ -281,7 +318,8 @@ resource "aws_subnet" "vpc_a_private_2" {
   tags = merge(
     local.common_tags,
     {
-      Name = "prod-vpc-a-private-subnet-2"
+      Name                              = "prod-vpc-a-private-subnet-2"
+      "kubernetes.io/role/internal-elb" = "1"
     }
   )
 }
@@ -289,6 +327,12 @@ resource "aws_subnet" "vpc_a_private_2" {
 resource "aws_route_table_association" "vpc_a_private_2" {
   subnet_id      = aws_subnet.vpc_a_private_2.id
   route_table_id = module.vpc_a.private_route_table_id
+}
+
+resource "aws_route" "vpc_a_private_internet" {
+  route_table_id         = module.vpc_a.private_route_table_id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.vpc_a.id
 }
 
 # =======================================================
@@ -306,11 +350,14 @@ module "rds" {
     aws_subnet.vpc_a_private_2.id
   ]
 
-  allowed_security_group_id = module.ec2_a.security_group_id
+  allowed_security_group_ids = [
+    module.ec2_a.security_group_id,
+    module.eks.cluster_security_group_id
+  ]
 
   db_name     = "productiondb"
   db_username = var.db_username
-  db_password = var.db_password
+
 
   instance_class    = "db.t3.micro"
   allocated_storage = 20
@@ -381,7 +428,7 @@ module "eks" {
     aws_subnet.vpc_a_private_2.id
   ]
 
-  instance_types = ["t3.medium"]
+  instance_types = ["t3.small"]
 
   min_size     = 2
   desired_size = 2
@@ -397,3 +444,5 @@ module "eks" {
     }
   )
 }
+
+

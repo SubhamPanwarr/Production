@@ -34,3 +34,9 @@ environments/prod/delete-markers.json
 environments/prod/markers-delete.json
 environments/prod/versions-delete.json
 environments/prod/versions.json
+
+# Terraform plan artifacts
+tfplan*
+**/tfplan*
+plan*.txt
+**/plan*.txt

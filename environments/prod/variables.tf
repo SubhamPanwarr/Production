@@ -45,13 +45,6 @@ variable "db_username" {
   sensitive   = true
 }
 
-variable "db_password" {
-  description = "RDS master password"
-  type        = string
-  sensitive   = true
-}
-
-
 variable "eks_cluster_name" {
   description = "Production EKS cluster name"
   type        = string
@@ -93,3 +86,5 @@ variable "enable_performance_insights" {
   type        = bool
   default     = false
 }
+
+
