@@ -1336,23 +1336,6 @@ GitHub
 
 ---
 
-# Next Implementation Steps
-
-The next Kubernetes platform steps are:
-
-1. Add `network-policy.tf`
-2. Validate allowed traffic from the `production` namespace
-3. Validate blocked traffic from an unauthorized namespace
-4. Add Metrics Server / repair HPA metrics if required
-5. Continue to Block 4:
-   - Helm
-   - Prometheus
-   - Grafana
-   - operational monitoring
-   - troubleshooting workflows
-   - production best practices
-
----
 
 # Author
 
