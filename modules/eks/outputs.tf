@@ -43,3 +43,11 @@ output "cluster_security_group_id" {
   description = "EKS cluster security group"
   value       = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
 }
+
+output "workload_node_group_name" {
+  description = "Dedicated application managed node group name"
+
+  value = var.create_workload_node_group ? (
+    aws_eks_node_group.workload[0].node_group_name
+  ) : null
+}

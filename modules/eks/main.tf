@@ -150,3 +150,68 @@ resource "aws_iam_openid_connect_provider" "eks" {
 
   tags = var.tags
 }
+
+############################################
+# DEDICATED APPLICATION NODE GROUP
+############################################
+
+resource "aws_eks_node_group" "workload" {
+  count = var.create_workload_node_group ? 1 : 0
+
+  cluster_name = aws_eks_cluster.this.name
+
+  node_group_name = "${var.cluster_name}-${var.workload_node_group_name}-node-group"
+
+  node_role_arn = aws_iam_role.eks_node_role.arn
+
+  subnet_ids = var.private_subnet_ids
+
+  instance_types = var.workload_instance_types
+
+  capacity_type = "ON_DEMAND"
+
+  scaling_config {
+    desired_size = var.workload_desired_size
+    min_size     = var.workload_min_size
+    max_size     = var.workload_max_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  # -----------------------------------------------------
+  # Kubernetes Node Labels
+  # -----------------------------------------------------
+
+  labels = var.workload_labels
+
+  # -----------------------------------------------------
+  # Kubernetes Node Taints
+  # -----------------------------------------------------
+
+  dynamic "taint" {
+    for_each = var.workload_taints
+
+    content {
+      key    = taint.value.key
+      value  = taint.value.value
+      effect = taint.value.effect
+    }
+  }
+
+  depends_on = [
+    aws_eks_node_group.this,
+    aws_iam_role_policy_attachment.worker_node_policy,
+    aws_iam_role_policy_attachment.ecr_pull_only,
+    aws_iam_role_policy_attachment.cni_policy
+  ]
+
+  tags = merge(
+    var.tags,
+    {
+      NodeGroup = "application"
+      Workload  = "frontend"
+    }
+  )
+}

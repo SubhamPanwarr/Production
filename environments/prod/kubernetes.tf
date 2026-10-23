@@ -70,14 +70,12 @@ resource "kubernetes_deployment_v1" "nginx" {
 
           # ----------------------------------------------
           # Node Affinity
-          # Prefer worker nodes labeled workload=frontend
+          # Force nginx Pods onto frontend workload nodes
           # ----------------------------------------------
 
           node_affinity {
-            preferred_during_scheduling_ignored_during_execution {
-              weight = 100
-
-              preference {
+            required_during_scheduling_ignored_during_execution {
+              node_selector_term {
                 match_expressions {
                   key      = "workload"
                   operator = "In"
@@ -109,6 +107,18 @@ resource "kubernetes_deployment_v1" "nginx" {
               }
             }
           }
+        }
+
+        # ------------------------------------------------
+        # Toleration
+        # Allows nginx Pods onto dedicated frontend nodes
+        # ------------------------------------------------
+
+        toleration {
+          key      = "dedicated"
+          operator = "Equal"
+          value    = "frontend"
+          effect   = "NoSchedule"
         }
 
         # ------------------------------------------------
